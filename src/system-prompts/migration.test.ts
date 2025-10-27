@@ -3,11 +3,13 @@ import { TFile, Vault } from "obsidian";
 import * as settingsModel from "@/settings/model";
 import * as systemPromptUtils from "@/system-prompts/systemPromptUtils";
 import * as logger from "@/logger";
+import * as utils from "@/utils";
 
 // Mock Obsidian
 jest.mock("obsidian", () => ({
   TFile: jest.fn(),
   Vault: jest.fn(),
+  normalizePath: jest.fn((path: string) => path),
 }));
 
 // Mock settings
@@ -31,6 +33,11 @@ jest.mock("@/system-prompts/systemPromptUtils", () => ({
   loadAllSystemPrompts: jest.fn(),
 }));
 
+// Mock utils
+jest.mock("@/utils", () => ({
+  ensureFolderExists: jest.fn(),
+}));
+
 // Mock ConfirmModal
 jest.mock("@/components/modals/ConfirmModal", () => ({
   ConfirmModal: jest.fn().mockImplementation(() => ({
@@ -44,6 +51,10 @@ describe("migrateSystemPromptsFromSettings", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Reset the utils mock
+    (utils.ensureFolderExists as jest.Mock).mockReset();
+    (utils.ensureFolderExists as jest.Mock).mockResolvedValue(undefined);
 
     // Create mock vault
     mockVault = {
@@ -89,11 +100,15 @@ describe("migrateSystemPromptsFromSettings", () => {
     (settingsModel.getSettings as jest.Mock).mockReturnValue({
       userSystemPrompt: "This is a legacy system prompt.",
     });
-    (mockVault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
+    (mockVault.getAbstractFileByPath as jest.Mock)
+      .mockReturnValueOnce(null) // File does not exist
+      .mockReturnValueOnce({
+        path: "SystemPrompts/Migrated Custom System Prompt.md",
+      } as TFile); // File created
 
     await migrateSystemPromptsFromSettings(mockVault);
 
-    expect(mockVault.createFolder).toHaveBeenCalledWith("SystemPrompts");
+    expect(utils.ensureFolderExists).toHaveBeenCalledWith("SystemPrompts");
   });
 
   it("does not create folder if it already exists", async () => {
@@ -101,12 +116,15 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: "This is a legacy system prompt.",
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce({ path: "SystemPrompts" }) // Folder exists
-      .mockReturnValueOnce(null); // File does not exist
+      .mockReturnValueOnce(null) // File does not exist
+      .mockReturnValueOnce({
+        path: "SystemPrompts/Migrated Custom System Prompt.md",
+      } as TFile); // File created
 
     await migrateSystemPromptsFromSettings(mockVault);
 
-    expect(mockVault.createFolder).not.toHaveBeenCalled();
+    // ensureFolderExists is always called, but it handles existing folders gracefully
+    expect(utils.ensureFolderExists).toHaveBeenCalledWith("SystemPrompts");
   });
 
   it("migrates legacy prompt to file with correct content", async () => {
@@ -115,7 +133,6 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null) // Folder does not exist
       .mockReturnValueOnce(null) // File does not exist
       .mockReturnValueOnce({
         path: "SystemPrompts/Migrated Custom System Prompt.md",
@@ -159,9 +176,8 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(mockFile);
+      .mockReturnValueOnce(null) // File does not exist check
+      .mockReturnValueOnce(mockFile); // File retrieved after creation
 
     Object.setPrototypeOf(mockFile, TFile.prototype);
 
@@ -186,9 +202,8 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(mockFile);
+      .mockReturnValueOnce(null) // File does not exist check
+      .mockReturnValueOnce(mockFile); // File retrieved after creation
 
     Object.setPrototypeOf(mockFile, TFile.prototype);
 
@@ -207,9 +222,8 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(mockFile);
+      .mockReturnValueOnce(null) // File does not exist check
+      .mockReturnValueOnce(mockFile); // File retrieved after creation
 
     Object.setPrototypeOf(mockFile, TFile.prototype);
 
@@ -231,9 +245,8 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(mockFile);
+      .mockReturnValueOnce(null) // File does not exist check
+      .mockReturnValueOnce(mockFile); // File retrieved after creation
 
     Object.setPrototypeOf(mockFile, TFile.prototype);
 
@@ -251,9 +264,7 @@ describe("migrateSystemPromptsFromSettings", () => {
     (settingsModel.getSettings as jest.Mock).mockReturnValue({
       userSystemPrompt: legacyPrompt,
     });
-    (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null) // Folder does not exist
-      .mockReturnValueOnce(existingFile); // File already exists
+    (mockVault.getAbstractFileByPath as jest.Mock).mockReturnValue(existingFile); // File already exists
 
     await migrateSystemPromptsFromSettings(mockVault);
 
@@ -272,9 +283,7 @@ describe("migrateSystemPromptsFromSettings", () => {
     (settingsModel.getSettings as jest.Mock).mockReturnValue({
       userSystemPrompt: legacyPrompt,
     });
-    (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(existingFile);
+    (mockVault.getAbstractFileByPath as jest.Mock).mockReturnValue(existingFile);
 
     await migrateSystemPromptsFromSettings(mockVault);
 
@@ -295,9 +304,8 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(mockFile);
+      .mockReturnValueOnce(null) // File does not exist check
+      .mockReturnValueOnce(mockFile); // File retrieved after creation
 
     Object.setPrototypeOf(mockFile, TFile.prototype);
 
@@ -316,7 +324,7 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
-    (mockVault.createFolder as jest.Mock).mockRejectedValue(error);
+    (utils.ensureFolderExists as jest.Mock).mockRejectedValue(error);
 
     await migrateSystemPromptsFromSettings(mockVault);
 
@@ -334,7 +342,7 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
-    (mockVault.createFolder as jest.Mock).mockRejectedValue(error);
+    (utils.ensureFolderExists as jest.Mock).mockRejectedValue(error);
 
     await expect(migrateSystemPromptsFromSettings(mockVault)).resolves.not.toThrow();
   });
@@ -349,9 +357,8 @@ describe("migrateSystemPromptsFromSettings", () => {
       userSystemPrompt: legacyPrompt,
     });
     (mockVault.getAbstractFileByPath as jest.Mock)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(mockFile);
+      .mockReturnValueOnce(null) // File does not exist check
+      .mockReturnValueOnce(mockFile); // File retrieved after creation
 
     Object.setPrototypeOf(mockFile, TFile.prototype);
 

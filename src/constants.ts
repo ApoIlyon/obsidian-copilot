@@ -880,6 +880,7 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   quickCommandModelKey: undefined,
   quickCommandIncludeNoteContext: true,
   autoIncludeTextSelection: false,
+  confirmFileOperations: true,
 };
 
 export const EVENT_NAMES = {

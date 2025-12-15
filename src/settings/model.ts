@@ -157,6 +157,7 @@ export interface CopilotSettings {
   quickCommandIncludeNoteContext: boolean;
   /** Automatically add text selections to chat context */
   autoIncludeTextSelection: boolean;
+  confirmFileOperations: boolean;
 }
 
 export const settingsStore = createStore();
@@ -423,6 +424,10 @@ export function sanitizeSettings(settings: CopilotSettings): CopilotSettings {
   // Ensure autoIncludeTextSelection has a default value
   if (typeof sanitizedSettings.autoIncludeTextSelection !== "boolean") {
     sanitizedSettings.autoIncludeTextSelection = DEFAULT_SETTINGS.autoIncludeTextSelection;
+  }
+
+  if (typeof sanitizedSettings.confirmFileOperations !== "boolean") {
+    sanitizedSettings.confirmFileOperations = DEFAULT_SETTINGS.confirmFileOperations;
   }
 
   // Ensure defaultSendShortcut has a valid value

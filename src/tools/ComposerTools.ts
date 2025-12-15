@@ -6,6 +6,8 @@ import { z } from "zod";
 import { createTool } from "./SimpleTool";
 import { ensureFolderExists } from "@/utils";
 import { logError, logInfo } from "@/logger";
+import { getSettings } from "@/settings/model";
+import { ConfirmModal } from "@/components/modals/ConfirmModal";
 
 async function getFile(file_path: string): Promise<TFile> {
   let file = app.vault.getAbstractFileByPath(file_path);
@@ -110,6 +112,38 @@ function formatFsError(error: any, operation: string, targetPath: string): strin
   }
 
   return `${prefix} Technical details: ${baseMessage}.`;
+}
+
+async function confirmFileOperation(message: string, title: string, confirmButtonText: string) {
+  const settings = getSettings();
+  if (!settings.confirmFileOperations) {
+    return true;
+  }
+
+  return new Promise<boolean>((resolve) => {
+    let resolved = false;
+    const modal = new ConfirmModal(
+      app,
+      () => {
+        resolved = true;
+        resolve(true);
+      },
+      message,
+      title,
+      confirmButtonText,
+      "Cancel"
+    );
+
+    const originalOnClose = modal.onClose.bind(modal);
+    modal.onClose = function () {
+      if (!resolved) {
+        resolve(false);
+      }
+      originalOnClose();
+    };
+
+    modal.open();
+  });
 }
 
 async function deleteFolderRecursively(path: string): Promise<void> {
@@ -238,6 +272,18 @@ const deleteNoteTool = createTool({
   schema: deleteNoteSchema,
   handler: async ({ path }: { path: string }) => {
     try {
+      const confirmed = await confirmFileOperation(
+        `Delete note:\n${path}\n\nThis action cannot be undone.`,
+        "Delete Note",
+        "Delete"
+      );
+      if (!confirmed) {
+        return JSON.stringify({
+          ok: false,
+          message: "Delete note operation cancelled by user.",
+        });
+      }
+
       const file = app.vault.getAbstractFileByPath(path);
 
       if (!file || !(file instanceof TFile)) {
@@ -280,6 +326,18 @@ const createFolderTool = createTool({
   schema: createFolderSchema,
   handler: async ({ path }: { path: string }) => {
     try {
+      const confirmed = await confirmFileOperation(
+        `Create folder (including missing parents):\n${path}`,
+        "Create Folder",
+        "Create"
+      );
+      if (!confirmed) {
+        return JSON.stringify({
+          ok: false,
+          message: "Create folder operation cancelled by user.",
+        });
+      }
+
       await ensureFolderExists(path);
       logInfo("[ComposerTools] createFolder succeeded", { path });
 
@@ -318,6 +376,20 @@ const deleteFolderTool = createTool({
   schema: deleteFolderSchema,
   handler: async ({ path, recursive }: { path: string; recursive?: boolean }) => {
     try {
+      const confirmed = await confirmFileOperation(
+        recursive
+          ? `Delete folder and all contents:\n${path}\n\nThis action cannot be undone.`
+          : `Delete folder (must be empty):\n${path}`,
+        "Delete Folder",
+        "Delete"
+      );
+      if (!confirmed) {
+        return JSON.stringify({
+          ok: false,
+          message: "Delete folder operation cancelled by user.",
+        });
+      }
+
       const file = app.vault.getAbstractFileByPath(path);
 
       if (!file || !(file instanceof TFolder)) {
@@ -395,6 +467,18 @@ const moveFileTool = createTool({
     createMissingFolders?: boolean;
   }) => {
     try {
+      const confirmed = await confirmFileOperation(
+        `Move or rename file:\n${fromPath}\n→\n${toPath}`,
+        "Move File",
+        "Move"
+      );
+      if (!confirmed) {
+        return JSON.stringify({
+          ok: false,
+          message: "Move file operation cancelled by user.",
+        });
+      }
+
       const file = app.vault.getAbstractFileByPath(fromPath);
 
       if (!file || !(file instanceof TFile)) {
@@ -479,6 +563,18 @@ const moveFolderTool = createTool({
     createMissingFolders?: boolean;
   }) => {
     try {
+      const confirmed = await confirmFileOperation(
+        `Move or rename folder (and all contents):\n${fromPath}\n→\n${toPath}`,
+        "Move Folder",
+        "Move"
+      );
+      if (!confirmed) {
+        return JSON.stringify({
+          ok: false,
+          message: "Move folder operation cancelled by user.",
+        });
+      }
+
       const folder = app.vault.getAbstractFileByPath(fromPath);
 
       if (!folder || !(folder instanceof TFolder)) {

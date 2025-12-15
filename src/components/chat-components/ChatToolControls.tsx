@@ -1,5 +1,5 @@
 import React from "react";
-import { Database, Globe, Pen, Sparkles, Brain, Wrench, Check } from "lucide-react";
+import { Database, Globe, Pen, Sparkles, Brain, Wrench, Check, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -11,7 +11,6 @@ import {
 import { ChainType } from "@/chainFactory";
 import { cn } from "@/lib/utils";
 import { updateSetting } from "@/settings/model";
-import { isPlusChain } from "@/utils";
 
 interface ChatToolControlsProps {
   // Tool toggle states
@@ -23,6 +22,8 @@ interface ChatToolControlsProps {
   setComposerToggle: (value: boolean) => void;
   autonomousAgentToggle: boolean;
   setAutonomousAgentToggle: (value: boolean) => void;
+  fileOpsConfirmToggle: boolean;
+  setFileOpsConfirmToggle: (value: boolean) => void;
 
   // Toggle-off callbacks for pill removal
   onVaultToggleOff?: () => void;
@@ -42,18 +43,25 @@ const ChatToolControls: React.FC<ChatToolControlsProps> = ({
   setComposerToggle,
   autonomousAgentToggle,
   setAutonomousAgentToggle,
+  fileOpsConfirmToggle,
+  setFileOpsConfirmToggle,
   onVaultToggleOff,
   onWebToggleOff,
   onComposerToggleOff,
   currentChain,
 }) => {
-  const isCopilotPlus = isPlusChain(currentChain);
-  const showAutonomousAgent = isCopilotPlus && currentChain !== ChainType.PROJECT_CHAIN;
+  const showAutonomousAgent = currentChain !== ChainType.PROJECT_CHAIN;
 
   const handleAutonomousAgentToggle = () => {
     const newValue = !autonomousAgentToggle;
     setAutonomousAgentToggle(newValue);
     updateSetting("enableAutonomousAgent", newValue);
+  };
+
+  const handleFileOpsConfirmToggle = () => {
+    const newValue = !fileOpsConfirmToggle;
+    setFileOpsConfirmToggle(newValue);
+    updateSetting("confirmFileOperations", newValue);
   };
 
   const handleVaultToggle = () => {
@@ -83,11 +91,6 @@ const ChatToolControls: React.FC<ChatToolControlsProps> = ({
     }
   };
 
-  // If not Copilot Plus, don't show any tools
-  if (!isCopilotPlus) {
-    return null;
-  }
-
   return (
     <TooltipProvider delayDuration={0}>
       {/* Desktop view - show all icons when container is wide enough */}
@@ -113,6 +116,25 @@ const ChatToolControls: React.FC<ChatToolControlsProps> = ({
             </TooltipContent>
           </Tooltip>
         )}
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost2"
+              size="fit"
+              onClick={handleFileOpsConfirmToggle}
+              className={cn(
+                "tw-text-muted hover:tw-text-accent",
+                fileOpsConfirmToggle && "tw-text-accent tw-bg-accent/10"
+              )}
+            >
+              <Shield className="tw-size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="tw-px-1 tw-py-0.5">
+            Toggle confirmations for file operations
+          </TooltipContent>
+        </Tooltip>
 
         {/* Toggle buttons for vault, web search, and composer - show when Autonomous Agent is off */}
         {!autonomousAgentToggle && (
@@ -196,6 +218,17 @@ const ChatToolControls: React.FC<ChatToolControlsProps> = ({
                 {autonomousAgentToggle && <Check className="tw-size-4" />}
               </DropdownMenuItem>
             )}
+
+            <DropdownMenuItem
+              onClick={handleFileOpsConfirmToggle}
+              className="tw-flex tw-items-center tw-justify-between"
+            >
+              <div className="tw-flex tw-items-center tw-gap-2">
+                <Shield className="tw-size-4" />
+                <span>Confirm file changes</span>
+              </div>
+              {fileOpsConfirmToggle && <Check className="tw-size-4" />}
+            </DropdownMenuItem>
 
             {/* Tool options - show when Autonomous Agent is off */}
             {!autonomousAgentToggle && (

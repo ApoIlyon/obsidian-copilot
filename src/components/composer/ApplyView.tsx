@@ -371,9 +371,169 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
 
   const previewContent = buildPreviewResultFromDiff(diff);
 
+  const proposedContent = diff
+    .filter((change) => !change.removed)
+    .map((change) => change.value)
+    .join("");
+
+  const renderRightPane = () => {
+    if (!isManageMode) {
+      return (
+        <div className="tw-whitespace-pre-wrap tw-font-mono tw-text-sm tw-text-normal">
+          {proposedContent}
+        </div>
+      );
+    }
+
+    return changeBlocks?.map((block, blockIndex) => {
+      const hasChanges = block.some((change) => change.added || change.removed);
+
+      const blockStatus = hasChanges
+        ? block.every(
+            (change) =>
+              (!change.added && !change.removed) || (change as ExtendedChange).accepted === true
+          )
+          ? "accepted"
+          : block.every(
+                (change) =>
+                  (!change.added && !change.removed) ||
+                  (change as ExtendedChange).accepted === false
+              )
+            ? "rejected"
+            : "undecided"
+        : "unchanged";
+
+      return (
+        <div
+          key={blockIndex}
+          ref={(el) => (blockRefs.current[blockIndex] = el)}
+          className={cn("tw-mb-4 tw-overflow-hidden tw-rounded-md")}
+        >
+          {blockStatus === "accepted" ? (
+            <div className="tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm tw-text-normal">
+              {block
+                .filter((change) => !change.removed)
+                .map((change, idx) => (
+                  <div key={idx}>{change.value}</div>
+                ))}
+            </div>
+          ) : blockStatus === "rejected" ? (
+            <div className="tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm tw-text-normal">
+              {block
+                .filter((change) => !change.added)
+                .map((change, idx) => (
+                  <div key={idx}>{change.value}</div>
+                ))}
+            </div>
+          ) : (
+            block.map((change, changeIndex) => {
+              if (change.added) {
+                const removedIdx = block.findIndex((c, i) => c.removed && i !== changeIndex);
+                if (removedIdx !== -1) {
+                  const removedLine = block[removedIdx].value;
+                  return (
+                    <div key={`${blockIndex}-${changeIndex}`} className="tw-relative">
+                      <div className="tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm">
+                        <WordDiff oldLine={removedLine} newLine={change.value} />
+                      </div>
+                    </div>
+                  );
+                }
+              }
+              if (change.removed) {
+                const addedIdx = block.findIndex((c, i) => c.added && i !== changeIndex);
+                if (addedIdx !== -1) {
+                  return null;
+                }
+              }
+              return (
+                <div key={`${blockIndex}-${changeIndex}`} className="tw-relative">
+                  <div
+                    className={cn(
+                      "tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm",
+                      {
+                        "tw-text-success": change.added,
+                        "tw-text-error": change.removed,
+                        "tw-text-normal": !change.added && !change.removed,
+                        "tw-line-through": change.removed,
+                      }
+                    )}
+                  >
+                    {change.value}
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {hasChanges && blockStatus === "undecided" && (
+            <div className="tw-flex tw-items-center tw-justify-end tw-border-[0px] tw-border-t tw-border-solid tw-border-border tw-p-2">
+              <div className="tw-flex tw-items-center tw-gap-2">
+                <Button variant="destructive" size="sm" onClick={() => rejectBlock(blockIndex)}>
+                  <XIcon className="tw-size-4" />
+                  Reject
+                </Button>
+                <Button variant="success" size="sm" onClick={() => acceptBlock(blockIndex)}>
+                  <Check className="tw-size-4" />
+                  Accept
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {hasChanges && (blockStatus === "accepted" || blockStatus === "rejected") && (
+            <div className="tw-flex tw-items-center tw-justify-end tw-border-[0px] tw-border-t tw-border-solid tw-border-border tw-p-2">
+              <div className="tw-flex tw-items-center tw-gap-2">
+                <div className="tw-mr-2 tw-text-sm tw-font-medium">
+                  {blockStatus === "accepted" ? (
+                    <div className="tw-flex tw-items-center tw-gap-1 tw-text-success">
+                      <Check className="tw-size-4" />
+                      <div>Accepted</div>
+                    </div>
+                  ) : (
+                    <div className="tw-flex tw-items-center tw-gap-1 tw-text-error">
+                      <XIcon className="tw-size-4" />
+                      <div>Rejected</div>
+                    </div>
+                  )}
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setDiff((prevDiff) => {
+                      const newDiff = [...prevDiff];
+                      const block = changeBlocks?.[blockIndex];
+
+                      if (!block) return newDiff;
+
+                      block.forEach((blockChange) => {
+                        const index = newDiff.findIndex((change) => change === blockChange);
+                        if (index !== -1) {
+                          newDiff[index] = {
+                            ...newDiff[index],
+                            accepted: null,
+                          };
+                        }
+                      });
+
+                      return newDiff;
+                    });
+                  }}
+                >
+                  Revert
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    });
+  };
+
   return (
     <div className="tw-relative tw-flex tw-h-full tw-flex-col">
-      <div className="tw-fixed tw-bottom-4 tw-left-1/2 tw-z-[9999] tw-flex tw-translate-x-[-50%] tw-gap-2 tw-rounded-md tw-border tw-border-solid tw-border-border tw-bg-secondary tw-p-2 tw-shadow-lg tw-transition-opacity tw-duration-200">
+      <div className="tw-fixed tw-bottom-4 tw-left-1/2 tw-z-[9999] tw-flex -tw-translate-x-1/2 tw-gap-2 tw-rounded-md tw-border tw-border-solid tw-border-border tw-bg-secondary tw-p-2 tw-shadow-lg tw-transition-opacity tw-duration-200">
         <Button variant="destructive" size="sm" onClick={handleReject}>
           <XIcon className="tw-size-4" />
           Reject
@@ -394,36 +554,59 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
       <div className="tw-flex tw-items-center tw-justify-between tw-border-b tw-border-solid tw-border-border tw-p-2 tw-text-sm tw-font-medium">
         <div className="tw-flex tw-flex-1 tw-items-center tw-gap-4">
           <span className="tw-flex-1 tw-truncate">{state.path}</span>
-          <div className="tw-flex tw-items-center tw-gap-1">
-            <button
-              type="button"
-              className={cn(
-                "tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted",
-                !showResult && "tw-font-semibold tw-text-normal"
-              )}
-              onClick={() => setShowResult(false)}
-            >
-              Original
-            </button>
-            <span className="tw-text-xs tw-text-muted">→</span>
-            <button
-              type="button"
-              className={cn(
-                "tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted",
-                showResult && "tw-font-semibold tw-text-normal"
-              )}
-              onClick={() => setShowResult(true)}
-            >
-              Result
-            </button>
-          </div>
-          <span className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted">Proposed</span>
+          {isManageMode ? (
+            <>
+              <div className="tw-flex tw-items-center tw-gap-1">
+                <button
+                  type="button"
+                  className={cn(
+                    "tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted",
+                    !showResult && "tw-font-semibold tw-text-normal"
+                  )}
+                  onClick={() => setShowResult(false)}
+                >
+                  Original
+                </button>
+                <span className="tw-text-xs tw-text-muted">→</span>
+                <button
+                  type="button"
+                  className={cn(
+                    "tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted",
+                    showResult && "tw-font-semibold tw-text-normal"
+                  )}
+                  onClick={() => setShowResult(true)}
+                >
+                  Result
+                </button>
+              </div>
+              <span className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted">
+                Proposed
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted">
+                Original
+              </span>
+              <span className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted">
+                Proposed
+              </span>
+            </>
+          )}
         </div>
         <Button
           variant="secondary"
           size="sm"
           className="tw-ml-4"
-          onClick={() => setIsManageMode((prev) => !prev)}
+          onClick={() =>
+            setIsManageMode((prev) => {
+              const next = !prev;
+              if (!next) {
+                setShowResult(false);
+              }
+              return next;
+            })
+          }
         >
           {isManageMode ? "Hide Controls" : "Manage Changes"}
         </Button>
@@ -432,163 +615,11 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
       <div className="tw-flex tw-flex-1 tw-overflow-hidden">
         <div className="tw-flex-1 tw-overflow-auto tw-border-r tw-border-solid tw-border-border tw-p-2">
           <div className="tw-whitespace-pre-wrap tw-font-mono tw-text-sm tw-text-normal">
-            {showResult ? previewContent : originalContent}
+            {isManageMode && showResult ? previewContent : originalContent}
           </div>
         </div>
 
-        <div className="tw-flex-1 tw-overflow-auto tw-p-2">
-          {changeBlocks?.map((block, blockIndex) => {
-            const hasChanges = block.some((change) => change.added || change.removed);
-
-            const blockStatus = hasChanges
-              ? block.every(
-                  (change) =>
-                    (!change.added && !change.removed) ||
-                    (change as ExtendedChange).accepted === true
-                )
-                ? "accepted"
-                : block.every(
-                      (change) =>
-                        (!change.added && !change.removed) ||
-                        (change as ExtendedChange).accepted === false
-                    )
-                  ? "rejected"
-                  : "undecided"
-              : "unchanged";
-
-            return (
-              <div
-                key={blockIndex}
-                ref={(el) => (blockRefs.current[blockIndex] = el)}
-                className={cn("tw-mb-4 tw-overflow-hidden tw-rounded-md")}
-              >
-                {blockStatus === "accepted" ? (
-                  <div className="tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm tw-text-normal">
-                    {block
-                      .filter((change) => !change.removed)
-                      .map((change, idx) => (
-                        <div key={idx}>{change.value}</div>
-                      ))}
-                  </div>
-                ) : blockStatus === "rejected" ? (
-                  <div className="tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm tw-text-normal">
-                    {block
-                      .filter((change) => !change.added)
-                      .map((change, idx) => (
-                        <div key={idx}>{change.value}</div>
-                      ))}
-                  </div>
-                ) : (
-                  block.map((change, changeIndex) => {
-                    if (change.added) {
-                      const removedIdx = block.findIndex((c, i) => c.removed && i !== changeIndex);
-                      if (removedIdx !== -1) {
-                        const removedLine = block[removedIdx].value;
-                        return (
-                          <div key={`${blockIndex}-${changeIndex}`} className="tw-relative">
-                            <div className="tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm">
-                              <WordDiff oldLine={removedLine} newLine={change.value} />
-                            </div>
-                          </div>
-                        );
-                      }
-                    }
-                    if (change.removed) {
-                      const addedIdx = block.findIndex((c, i) => c.added && i !== changeIndex);
-                      if (addedIdx !== -1) {
-                        return null;
-                      }
-                    }
-                    return (
-                      <div key={`${blockIndex}-${changeIndex}`} className="tw-relative">
-                        <div
-                          className={cn(
-                            "tw-flex-1 tw-whitespace-pre-wrap tw-px-2 tw-py-1 tw-font-mono tw-text-sm",
-                            {
-                              "tw-text-success": change.added,
-                              "tw-text-error": change.removed,
-                              "tw-text-normal": !change.added && !change.removed,
-                              "tw-line-through": change.removed,
-                            }
-                          )}
-                        >
-                          {change.value}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-
-                {isManageMode && hasChanges && blockStatus === "undecided" && (
-                  <div className="tw-flex tw-items-center tw-justify-end tw-border-[0px] tw-border-t tw-border-solid tw-border-border tw-p-2">
-                    <div className="tw-flex tw-items-center tw-gap-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => rejectBlock(blockIndex)}
-                      >
-                        <XIcon className="tw-size-4" />
-                        Reject
-                      </Button>
-                      <Button variant="success" size="sm" onClick={() => acceptBlock(blockIndex)}>
-                        <Check className="tw-size-4" />
-                        Accept
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {isManageMode &&
-                  hasChanges &&
-                  (blockStatus === "accepted" || blockStatus === "rejected") && (
-                    <div className="tw-flex tw-items-center tw-justify-end tw-border-[0px] tw-border-t tw-border-solid tw-border-border tw-p-2">
-                      <div className="tw-flex tw-items-center tw-gap-2">
-                        <div className="tw-mr-2 tw-text-sm tw-font-medium">
-                          {blockStatus === "accepted" ? (
-                            <div className="tw-flex tw-items-center tw-gap-1 tw-text-success">
-                              <Check className="tw-size-4" />
-                              <div>Accepted</div>
-                            </div>
-                          ) : (
-                            <div className="tw-flex tw-items-center tw-gap-1 tw-text-error">
-                              <XIcon className="tw-size-4" />
-                              <div>Rejected</div>
-                            </div>
-                          )}
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setDiff((prevDiff) => {
-                              const newDiff = [...prevDiff];
-                              const block = changeBlocks?.[blockIndex];
-
-                              if (!block) return newDiff;
-
-                              block.forEach((blockChange) => {
-                                const index = newDiff.findIndex((change) => change === blockChange);
-                                if (index !== -1) {
-                                  newDiff[index] = {
-                                    ...newDiff[index],
-                                    accepted: null,
-                                  };
-                                }
-                              });
-
-                              return newDiff;
-                            });
-                          }}
-                        >
-                          Revert
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-              </div>
-            );
-          })}
-        </div>
+        <div className="tw-flex-1 tw-overflow-auto tw-p-2">{renderRightPane()}</div>
       </div>
     </div>
   );

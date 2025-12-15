@@ -1,4 +1,4 @@
-import { ABORT_REASON, ModelCapability } from "@/constants";
+import { ABORT_REASON, COMPOSER_OUTPUT_INSTRUCTIONS, ModelCapability } from "@/constants";
 import { LayerToMessagesConverter } from "@/context/LayerToMessagesConverter";
 import { logInfo } from "@/logger";
 import { getSettings } from "@/settings/model";
@@ -8,6 +8,9 @@ import { BaseChainRunner } from "./BaseChainRunner";
 import { recordPromptPayload } from "./utils/promptPayloadRecorder";
 import { ThinkBlockStreamer } from "./utils/ThinkBlockStreamer";
 import { getModelKey } from "@/aiParams";
+import { ActionBlockStreamer } from "./utils/ActionBlockStreamer";
+import { ToolManager } from "@/tools/toolManager";
+import { writeToFileTool } from "@/tools/ComposerTools";
 
 export class LLMChainRunner extends BaseChainRunner {
   /**
@@ -29,7 +32,6 @@ export class LLMChainRunner extends BaseChainRunner {
     const memoryVariables = await memory.loadMemoryVariables({});
     const chatHistory = extractChatHistory(memoryVariables);
 
-    // Convert envelope to messages (L1 system + L2+L3+L5 user)
     const baseMessages = LayerToMessagesConverter.convert(userMessage.contextEnvelope, {
       includeSystemMessage: true,
       mergeUserContent: true,
@@ -50,15 +52,22 @@ export class LLMChainRunner extends BaseChainRunner {
       messages.push({ role: entry.role, content: entry.content });
     }
 
-    // Add user message (L2+L3+L5 merged)
     const userMessageContent = baseMessages.find((m) => m.role === "user");
     if (userMessageContent) {
-      // Handle multimodal content if present
+      const hasComposer =
+        typeof userMessage.message === "string" && userMessage.message.includes("@composer");
+      const composerPrompt = hasComposer
+        ? `<OUTPUT_FORMAT>\n${COMPOSER_OUTPUT_INSTRUCTIONS}\n</OUTPUT_FORMAT>`
+        : "";
+
+      const finalUserText = composerPrompt
+        ? `${userMessageContent.content}\n\n${composerPrompt}`
+        : userMessageContent.content;
+
       if (userMessage.content && Array.isArray(userMessage.content)) {
-        // Merge envelope text with multimodal content (images)
         const updatedContent = userMessage.content.map((item: any) => {
           if (item.type === "text") {
-            return { ...item, text: userMessageContent.content };
+            return { ...item, text: finalUserText };
           }
           return item;
         });
@@ -67,7 +76,10 @@ export class LLMChainRunner extends BaseChainRunner {
           content: updatedContent,
         });
       } else {
-        messages.push(userMessageContent);
+        messages.push({
+          role: "user",
+          content: finalUserText,
+        });
       }
     }
 
@@ -119,8 +131,10 @@ export class LLMChainRunner extends BaseChainRunner {
 
       logInfo("Final Request to AI:\n", messages);
 
-      // Stream with abort signal
-      const chatStream = await withSuppressedTokenWarnings(() =>
+      const actionStreamer = new ActionBlockStreamer(ToolManager, writeToFileTool);
+
+      // Stream with abort signal and handle writeToFile actions
+      const chatStream = await withSuppressedTokenWarnings<AsyncIterable<any>>(() =>
         this.chainManager.chatModelManager.getChatModel().stream(messages, {
           signal: abortController.signal,
         })
@@ -131,7 +145,9 @@ export class LLMChainRunner extends BaseChainRunner {
           logInfo("Stream iteration aborted", { reason: abortController.signal.reason });
           break;
         }
-        streamer.processChunk(chunk);
+        for await (const processedChunk of actionStreamer.processChunk(chunk)) {
+          streamer.processChunk(processedChunk);
+        }
       }
     } catch (error: any) {
       // Check if the error is due to abort signal

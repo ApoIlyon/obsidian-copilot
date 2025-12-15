@@ -1,4 +1,9 @@
-import { ABORT_REASON, ModelCapability, RETRIEVED_DOCUMENT_TAG } from "@/constants";
+import {
+  ABORT_REASON,
+  COMPOSER_OUTPUT_INSTRUCTIONS,
+  ModelCapability,
+  RETRIEVED_DOCUMENT_TAG,
+} from "@/constants";
 import { getStandaloneQuestion } from "@/chainUtils";
 import { LayerToMessagesConverter } from "@/context/LayerToMessagesConverter";
 import { logInfo } from "@/logger";
@@ -26,6 +31,9 @@ import {
 import { recordPromptPayload } from "./utils/promptPayloadRecorder";
 import { ThinkBlockStreamer } from "./utils/ThinkBlockStreamer";
 import { getModelKey } from "@/aiParams";
+import { ActionBlockStreamer } from "./utils/ActionBlockStreamer";
+import { ToolManager } from "@/tools/toolManager";
+import { writeToFileTool } from "@/tools/ComposerTools";
 
 export class VaultQAChainRunner extends BaseChainRunner {
   async run(
@@ -186,8 +194,16 @@ export class VaultQAChainRunner extends BaseChainRunner {
       // - Items NOT in L2 → full content
       const userMessageContent = baseMessages.find((m) => m.role === "user");
       if (userMessageContent) {
-        // Prepend RAG results and citations to user content with proper separator
-        const enhancedUserContent = qaInstructions + "\n\n" + userMessageContent.content;
+        const hasComposer =
+          typeof userMessage.message === "string" && userMessage.message.includes("@composer");
+        const composerPrompt = hasComposer
+          ? `<OUTPUT_FORMAT>\n${COMPOSER_OUTPUT_INSTRUCTIONS}\n</OUTPUT_FORMAT>`
+          : "";
+
+        const enhancedUserContentBase = qaInstructions + "\n\n" + userMessageContent.content;
+        const enhancedUserContent = composerPrompt
+          ? `${enhancedUserContentBase}\n\n${composerPrompt}`
+          : enhancedUserContentBase;
 
         // Handle multimodal content if present
         if (userMessage.content && Array.isArray(userMessage.content)) {
@@ -219,7 +235,9 @@ export class VaultQAChainRunner extends BaseChainRunner {
 
       logInfo("Final Request to AI:\n", messages);
 
-      // Stream with abort signal
+      const actionStreamer = new ActionBlockStreamer(ToolManager, writeToFileTool);
+
+      // Stream with abort signal and handle writeToFile actions
       const chatStream = await withSuppressedTokenWarnings(() =>
         this.chainManager.chatModelManager.getChatModel().stream(messages, {
           signal: abortController.signal,
@@ -231,7 +249,9 @@ export class VaultQAChainRunner extends BaseChainRunner {
           logInfo("VaultQA stream iteration aborted", { reason: abortController.signal.reason });
           break;
         }
-        streamer.processChunk(chunk);
+        for await (const processedChunk of actionStreamer.processChunk(chunk)) {
+          streamer.processChunk(processedChunk);
+        }
       }
     } catch (error: any) {
       // Check if the error is due to abort signal

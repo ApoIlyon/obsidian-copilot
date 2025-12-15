@@ -11,16 +11,35 @@ const MockedToolResultFormatter = ToolResultFormatter as jest.Mocked<typeof Tool
 
 describe("ActionBlockStreamer", () => {
   let writeToFileTool: any;
+  let replaceInFileTool: any;
+  let deleteNoteTool: any;
+  let createFolderTool: any;
+  let deleteFolderTool: any;
+  let moveFileTool: any;
+  let moveFolderTool: any;
   let streamer: ActionBlockStreamer;
 
   beforeEach(() => {
     writeToFileTool = { name: "writeToFile" };
+    replaceInFileTool = { name: "replaceInFile" };
+    deleteNoteTool = { name: "deleteNote" };
+    createFolderTool = { name: "createFolder" };
+    deleteFolderTool = { name: "deleteFolder" };
+    moveFileTool = { name: "moveFile" };
+    moveFolderTool = { name: "moveFolder" };
     MockedToolManager.callTool.mockClear();
 
-    // Mock ToolResultFormatter to return the raw result without "File change result: " prefix
     MockedToolResultFormatter.format = jest.fn((_toolName, result) => result);
 
-    streamer = new ActionBlockStreamer(MockedToolManager, writeToFileTool);
+    streamer = new ActionBlockStreamer(MockedToolManager, {
+      writeToFile: writeToFileTool,
+      replaceInFile: replaceInFileTool,
+      deleteNote: deleteNoteTool,
+      createFolder: createFolderTool,
+      deleteFolder: deleteFolderTool,
+      moveFile: moveFileTool,
+      moveFolder: moveFolderTool,
+    });
   });
 
   // Helper function to process chunks and collect results
@@ -227,6 +246,59 @@ describe("ActionBlockStreamer", () => {
     expect(MockedToolManager.callTool).toHaveBeenCalledWith(writeToFileTool, {
       path: "missing-content.txt",
       content: undefined,
+    });
+  });
+
+  it("should handle a complete moveFile block", async () => {
+    MockedToolManager.callTool.mockResolvedValue("File moved successfully.");
+    const chunks = [
+      {
+        content: "<moveFile><fromPath>old.md</fromPath><toPath>new.md</toPath></moveFile>",
+      },
+    ];
+    const output = await processChunks(chunks);
+    expect(output).toEqual([
+      "<moveFile><fromPath>old.md</fromPath><toPath>new.md</toPath></moveFile>",
+      "\nFile moved successfully.\n",
+    ]);
+    expect(MockedToolManager.callTool).toHaveBeenCalledWith(moveFileTool, {
+      fromPath: "old.md",
+      toPath: "new.md",
+    });
+  });
+
+  it("should handle a complete createFolder block", async () => {
+    MockedToolManager.callTool.mockResolvedValue("Folder created.");
+    const chunks = [
+      {
+        content: "<createFolder><path>folder/path</path></createFolder>",
+      },
+    ];
+    const output = await processChunks(chunks);
+    expect(output).toEqual([
+      "<createFolder><path>folder/path</path></createFolder>",
+      "\nFolder created.\n",
+    ]);
+    expect(MockedToolManager.callTool).toHaveBeenCalledWith(createFolderTool, {
+      path: "folder/path",
+    });
+  });
+
+  it("should handle a complete deleteFolder block with recursive flag", async () => {
+    MockedToolManager.callTool.mockResolvedValue("Folder deleted.");
+    const chunks = [
+      {
+        content: "<deleteFolder><path>folder/path</path><recursive>true</recursive></deleteFolder>",
+      },
+    ];
+    const output = await processChunks(chunks);
+    expect(output).toEqual([
+      "<deleteFolder><path>folder/path</path><recursive>true</recursive></deleteFolder>",
+      "\nFolder deleted.\n",
+    ]);
+    expect(MockedToolManager.callTool).toHaveBeenCalledWith(deleteFolderTool, {
+      path: "folder/path",
+      recursive: true,
     });
   });
 });

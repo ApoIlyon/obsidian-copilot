@@ -16,7 +16,15 @@ import {
 import { logInfo, logWarn } from "@/logger";
 import { checkIsPlusUser } from "@/plusUtils";
 import { getSettings, getSystemPromptWithMemory } from "@/settings/model";
-import { writeToFileTool } from "@/tools/ComposerTools";
+import {
+  writeToFileTool,
+  replaceInFileTool,
+  deleteNoteTool,
+  createFolderTool,
+  deleteFolderTool,
+  moveFileTool,
+  moveFolderTool,
+} from "@/tools/ComposerTools";
 import { ToolManager } from "@/tools/toolManager";
 import { ToolResultFormatter } from "@/tools/ToolResultFormatter";
 import { ChatMessage, ResponseMetadata } from "@/types/message";
@@ -422,7 +430,15 @@ export class CopilotPlusChainRunner extends BaseChainRunner {
       contextEnvelope: userMessage.contextEnvelope,
     });
 
-    const actionStreamer = new ActionBlockStreamer(ToolManager, writeToFileTool);
+    const actionStreamer = new ActionBlockStreamer(ToolManager, {
+      writeToFile: writeToFileTool,
+      replaceInFile: replaceInFileTool,
+      deleteNote: deleteNoteTool,
+      createFolder: createFolderTool,
+      deleteFolder: deleteFolderTool,
+      moveFile: moveFileTool,
+      moveFolder: moveFolderTool,
+    });
 
     // Wrap the stream call with warning suppression
     const chatStream = await withSuppressedTokenWarnings(() =>

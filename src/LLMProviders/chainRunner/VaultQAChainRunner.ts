@@ -33,7 +33,15 @@ import { ThinkBlockStreamer } from "./utils/ThinkBlockStreamer";
 import { getModelKey } from "@/aiParams";
 import { ActionBlockStreamer } from "./utils/ActionBlockStreamer";
 import { ToolManager } from "@/tools/toolManager";
-import { writeToFileTool } from "@/tools/ComposerTools";
+import {
+  writeToFileTool,
+  replaceInFileTool,
+  deleteNoteTool,
+  createFolderTool,
+  deleteFolderTool,
+  moveFileTool,
+  moveFolderTool,
+} from "@/tools/ComposerTools";
 
 export class VaultQAChainRunner extends BaseChainRunner {
   async run(
@@ -235,7 +243,15 @@ export class VaultQAChainRunner extends BaseChainRunner {
 
       logInfo("Final Request to AI:\n", messages);
 
-      const actionStreamer = new ActionBlockStreamer(ToolManager, writeToFileTool);
+      const actionStreamer = new ActionBlockStreamer(ToolManager, {
+        writeToFile: writeToFileTool,
+        replaceInFile: replaceInFileTool,
+        deleteNote: deleteNoteTool,
+        createFolder: createFolderTool,
+        deleteFolder: deleteFolderTool,
+        moveFile: moveFileTool,
+        moveFolder: moveFolderTool,
+      });
 
       // Stream with abort signal and handle writeToFile actions
       const chatStream = await withSuppressedTokenWarnings(() =>

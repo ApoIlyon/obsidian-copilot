@@ -1,6 +1,14 @@
 import { getSettings } from "@/settings/model";
 import { Vault } from "obsidian";
-import { replaceInFileTool, writeToFileTool } from "./ComposerTools";
+import {
+  replaceInFileTool,
+  writeToFileTool,
+  deleteNoteTool,
+  createFolderTool,
+  deleteFolderTool,
+  moveFileTool,
+  moveFolderTool,
+} from "./ComposerTools";
 import { createGetFileTreeTool } from "./FileTreeTools";
 import { updateMemoryTool } from "./memoryTools";
 import { readNoteTool } from "./NoteTools";
@@ -249,6 +257,11 @@ Example (next chunk):
 - Do not call writeToFile tool if no change needs to be made
 - Always create new notes in root folder or folders the user explicitly specifies
 - When creating a new note in a folder, you MUST use getFileTree to get the exact folder path first
+- IMPORTANT: Do NOT use writeToFile to rename, move, or delete files or folders. For those operations, you MUST use:
+  - moveFile (for moving or renaming a single file)
+  - moveFolder (for moving or renaming a folder)
+  - deleteNote (for deleting a note file)
+  - deleteFolder (for deleting a folder)
 
 Example usage:
 <use_tool>
@@ -296,6 +309,80 @@ Example usage:
 +++++++ REPLACE
 </diff>
 </use_tool>`,
+    },
+  },
+
+  {
+    tool: deleteNoteTool,
+    metadata: {
+      id: "deleteNote",
+      displayName: "Delete Note",
+      description: "Permanently delete a note from your vault",
+      category: "file",
+      requiresVault: true,
+      customPromptInstructions: `For deleteNote:
+- Only call when the user explicitly asks to delete a specific note
+- Always pass the full vault-relative path including extension
+- Consider using getFileTree to confirm the exact path when unsure
+- Deletions cannot be undone; avoid deleting notes unless clearly requested`,
+    },
+  },
+  {
+    tool: createFolderTool,
+    metadata: {
+      id: "createFolder",
+      displayName: "Create Folder",
+      description: "Create folders in your vault if they do not already exist",
+      category: "file",
+      requiresVault: true,
+      customPromptInstructions: `For createFolder:
+- Use when the user asks to create a folder or subfolder
+- Pass a vault-relative folder path (no leading slash)
+- Safe to call multiple times for the same path`,
+    },
+  },
+  {
+    tool: deleteFolderTool,
+    metadata: {
+      id: "deleteFolder",
+      displayName: "Delete Folder",
+      description: "Delete a folder from your vault, optionally with its contents",
+      category: "file",
+      requiresVault: true,
+      customPromptInstructions: `For deleteFolder:
+- Only call when the user explicitly asks to delete a folder
+- Pass a vault-relative folder path (no leading slash)
+- Set recursive=true only when the user agrees to delete all contents`,
+    },
+  },
+  {
+    tool: moveFileTool,
+    metadata: {
+      id: "moveFile",
+      displayName: "Move File",
+      description: "Move or rename a single file inside your vault",
+      category: "file",
+      requiresVault: true,
+      customPromptInstructions: `For moveFile:
+- Use when the user asks to move or rename one file
+- Pass fromPath and toPath as vault-relative paths including extension
+- Prefer using getFileTree to discover exact paths before calling
+- The tool uses Obsidian's file manager to update links safely`,
+    },
+  },
+  {
+    tool: moveFolderTool,
+    metadata: {
+      id: "moveFolder",
+      displayName: "Move Folder",
+      description: "Move or rename a folder and all its contents",
+      category: "file",
+      requiresVault: true,
+      customPromptInstructions: `For moveFolder:
+- Use when the user asks to move or rename a folder
+- Pass fromPath and toPath as vault-relative folder paths
+- Prefer using getFileTree to confirm the structure before calling
+- The tool uses Obsidian's file manager to update links where possible`,
     },
   },
 

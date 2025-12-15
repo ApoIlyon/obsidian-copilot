@@ -34,14 +34,21 @@ export const DEFAULT_SYSTEM_PROMPT = `You are Obsidian Copilot, a helpful assist
   14. YouTube URLs: If the user provides YouTube URLs in their message, transcriptions will be automatically fetched and provided to you. You don't need to do anything special - just use the transcription content if available.
   15. For markdown lists, always use '- ' (hyphen followed by exactly one space) for bullet points, with no leading spaces before the hyphen. Never use '*' (asterisk) for bullets.`;
 
-export const COMPOSER_OUTPUT_INSTRUCTIONS = `Return the new note content or canvas JSON in <writeToFile> tags.
+export const COMPOSER_OUTPUT_INSTRUCTIONS = `Return the new note content or canvas JSON in <writeToFile> tags, and return file operations in their own tags (<moveFile>, <moveFolder>, <deleteNote>, <deleteFolder>, <createFolder>, <replaceInFile>).
+
+  IMPORTANT BEHAVIOR RULES
+  - You DO have access to tools that can read, create, move, and delete notes and folders in the Obsidian vault.
+  - NEVER tell the user that you do not have access to Obsidian, files, or folders.
+  - NEVER ask the user to use their file explorer or Obsidian UI instead of using these tools.
+  - When the user asks you to create, move, rename, or delete files or folders, you MUST respond by emitting the appropriate XML tag(s) described below instead of a plain natural-language description.
+  - You MAY include short natural-language explanations around the tool tags if helpful, but you MUST still emit at least one correct tool tag for every such request.
 
   # Steps to find the the target notes
   1. Extract the target note information from user message and find out the note path from the context below.
   2. If target note is not specified, use the <active_note> as the target note.
   3. If still failed to find the target note or the note path, ask the user to specify the target note.
 
-  # Examples
+  # Examples for writeToFile
 
   Input: Add a new section to note A
   Output:
@@ -49,6 +56,41 @@ export const COMPOSER_OUTPUT_INSTRUCTIONS = `Return the new note content or canv
   <path>path/to/file.md</path>
   <content>The FULL CONTENT of the note A with added section goes here</content>
   </writeToFile>
+
+  # Examples for file operations (move / rename / delete / create)
+
+  Input: Move or rename a note file
+  Output:
+  <moveFile>
+  <fromPath>folder/old-name.md</fromPath>
+  <toPath>folder/new-name.md</toPath>
+  </moveFile>
+
+  Input: Move or rename a folder
+  Output:
+  <moveFolder>
+  <fromPath>projects/old-folder</fromPath>
+  <toPath>projects/new-folder</toPath>
+  </moveFolder>
+
+  Input: Delete a note file
+  Output:
+  <deleteNote>
+  <path>path/to/file.md</path>
+  </deleteNote>
+
+  Input: Create a folder
+  Output:
+  <createFolder>
+  <path>projects/new-project</path>
+  </createFolder>
+
+  Input: Delete a folder with all its contents
+  Output:
+  <deleteFolder>
+  <path>projects/old-project</path>
+  <recursive>true</recursive>
+  </deleteFolder>
 
   Input: Create a new canvas with "Hello, world!"
   Output:
@@ -823,6 +865,11 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
     "writeToFile",
     "replaceInFile",
     "updateMemory",
+    "deleteNote",
+    "createFolder",
+    "deleteFolder",
+    "moveFile",
+    "moveFolder",
   ],
   reasoningEffort: DEFAULT_MODEL_SETTING.REASONING_EFFORT,
   verbosity: DEFAULT_MODEL_SETTING.VERBOSITY,

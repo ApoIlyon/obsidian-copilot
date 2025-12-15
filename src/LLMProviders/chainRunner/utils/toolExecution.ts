@@ -146,6 +146,11 @@ export function getToolDisplayName(toolName: string): string {
     indexTool: "index",
     writeToFile: "file editor",
     replaceInFile: "file editor",
+    deleteNote: "delete note",
+    createFolder: "create folder",
+    deleteFolder: "delete folder",
+    moveFile: "move file",
+    moveFolder: "move folder",
   };
 
   return displayNameMap[toolName] || toolName;
@@ -169,6 +174,11 @@ export function getToolEmoji(toolName: string): string {
     writeToFile: "✏️",
     replaceInFile: "🔄",
     readNote: "🔍",
+    deleteNote: "🗑️",
+    createFolder: "📁",
+    deleteFolder: "🗑️",
+    moveFile: "📄",
+    moveFolder: "📂",
   };
 
   return emojiMap[toolName] || "🔧";

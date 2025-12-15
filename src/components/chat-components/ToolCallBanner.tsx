@@ -40,7 +40,9 @@ const formatToolResult = (toolName: string, result: string | null): string | nul
   }
 
   if (result.length > MAX_DISPLAY_CHARS) {
-    return `Tool '${toolName}' returned ${result.length.toLocaleString()} characters. The full output is preserved in chat history but omitted here to keep the UI responsive.`;
+    return `Tool '${toolName}' returned ${result.length.toLocaleString(
+      "en-US"
+    )} characters. The full output is preserved in chat history but omitted here to keep the UI responsive.`;
   }
 
   try {
@@ -48,13 +50,17 @@ const formatToolResult = (toolName: string, result: string | null): string | nul
     if (formatted.length > MAX_DISPLAY_CHARS) {
       return (
         formatted.slice(0, MAX_DISPLAY_CHARS) +
-        `\n\n… (truncated ${(formatted.length - MAX_DISPLAY_CHARS).toLocaleString()} characters for display)`
+        `\n\n… (truncated ${(formatted.length - MAX_DISPLAY_CHARS).toLocaleString(
+          "en-US"
+        )} characters for display)`
       );
     }
     return formatted;
   } catch {
     return result.length > MAX_DISPLAY_CHARS
-      ? `Tool '${toolName}' returned ${result.length.toLocaleString()} characters. The full output is preserved in chat history but omitted here to keep the UI responsive.`
+      ? `Tool '${toolName}' returned ${result.length.toLocaleString(
+          "en-US"
+        )} characters. The full output is preserved in chat history but omitted here to keep the UI responsive.`
       : result;
   }
 };

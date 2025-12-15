@@ -10,7 +10,15 @@ import { ThinkBlockStreamer } from "./utils/ThinkBlockStreamer";
 import { getModelKey } from "@/aiParams";
 import { ActionBlockStreamer } from "./utils/ActionBlockStreamer";
 import { ToolManager } from "@/tools/toolManager";
-import { writeToFileTool } from "@/tools/ComposerTools";
+import {
+  writeToFileTool,
+  replaceInFileTool,
+  deleteNoteTool,
+  createFolderTool,
+  deleteFolderTool,
+  moveFileTool,
+  moveFolderTool,
+} from "@/tools/ComposerTools";
 
 export class LLMChainRunner extends BaseChainRunner {
   /**
@@ -54,15 +62,8 @@ export class LLMChainRunner extends BaseChainRunner {
 
     const userMessageContent = baseMessages.find((m) => m.role === "user");
     if (userMessageContent) {
-      const hasComposer =
-        typeof userMessage.message === "string" && userMessage.message.includes("@composer");
-      const composerPrompt = hasComposer
-        ? `<OUTPUT_FORMAT>\n${COMPOSER_OUTPUT_INSTRUCTIONS}\n</OUTPUT_FORMAT>`
-        : "";
-
-      const finalUserText = composerPrompt
-        ? `${userMessageContent.content}\n\n${composerPrompt}`
-        : userMessageContent.content;
+      const composerPrompt = `<OUTPUT_FORMAT>\n${COMPOSER_OUTPUT_INSTRUCTIONS}\n</OUTPUT_FORMAT>`;
+      const finalUserText = `${userMessageContent.content}\n\n${composerPrompt}`;
 
       if (userMessage.content && Array.isArray(userMessage.content)) {
         const updatedContent = userMessage.content.map((item: any) => {
@@ -131,7 +132,15 @@ export class LLMChainRunner extends BaseChainRunner {
 
       logInfo("Final Request to AI:\n", messages);
 
-      const actionStreamer = new ActionBlockStreamer(ToolManager, writeToFileTool);
+      const actionStreamer = new ActionBlockStreamer(ToolManager, {
+        writeToFile: writeToFileTool,
+        replaceInFile: replaceInFileTool,
+        deleteNote: deleteNoteTool,
+        createFolder: createFolderTool,
+        deleteFolder: deleteFolderTool,
+        moveFile: moveFileTool,
+        moveFolder: moveFolderTool,
+      });
 
       // Stream with abort signal and handle writeToFile actions
       const chatStream = await withSuppressedTokenWarnings<AsyncIterable<any>>(() =>

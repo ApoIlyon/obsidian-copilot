@@ -1,10 +1,11 @@
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import { APPLY_VIEW_TYPE } from "@/components/composer/ApplyView";
 import { diffTrimmedLines } from "diff";
 import { ApplyViewResult } from "@/types";
 import { z } from "zod";
 import { createTool } from "./SimpleTool";
 import { ensureFolderExists } from "@/utils";
+import { logError, logInfo } from "@/logger";
 
 async function getFile(file_path: string): Promise<TFile> {
   let file = app.vault.getAbstractFileByPath(file_path);
@@ -79,6 +80,53 @@ async function show_preview(file_path: string, content: string): Promise<ApplyVi
   });
 }
 
+function formatFsError(error: any, operation: string, targetPath: string): string {
+  const code = (error && (error.code || error.errno)) || "";
+  const baseMessage = error?.message || String(error);
+
+  let humanMessage = "";
+
+  if (code === "EACCES" || code === "EPERM") {
+    humanMessage = "Insufficient permissions to access this file or folder.";
+  } else if (code === "EBUSY") {
+    humanMessage = "The file or folder is currently in use by another process.";
+  } else if (code === "ENOSPC") {
+    humanMessage = "No space left on device.";
+  } else if (code === "EROFS") {
+    humanMessage = "The underlying file system is read-only.";
+  }
+
+  const prefix = `Failed to ${operation} "${targetPath}".`;
+
+  if (humanMessage) {
+    if (code) {
+      return `${prefix} ${humanMessage} Technical details: ${baseMessage} (code ${code}).`;
+    }
+    return `${prefix} ${humanMessage} Technical details: ${baseMessage}.`;
+  }
+
+  if (code) {
+    return `${prefix} Technical details: ${baseMessage} (code ${code}).`;
+  }
+
+  return `${prefix} Technical details: ${baseMessage}.`;
+}
+
+async function deleteFolderRecursively(path: string): Promise<void> {
+  const adapter = app.vault.adapter as any;
+  const listing = await adapter.list(path);
+
+  for (const filePath of listing.files ?? []) {
+    await adapter.remove(filePath);
+  }
+
+  for (const folderPath of listing.folders ?? []) {
+    await deleteFolderRecursively(folderPath);
+  }
+
+  await adapter.rmdir(path);
+}
+
 // Define Zod schema for writeToFile
 const writeToFileSchema = z.object({
   path: z.string().describe(`(Required) The path to the file to write to. 
@@ -140,7 +188,7 @@ const writeToFileTool = createTool({
       1. Extract the target file information from user message and find out the file path from the context.
       2. If target file is not specified, use the active note as the target file.
       3. If still failed to find the target file or the file path, ask the user to specify the target file.
-      `,
+  `,
   schema: writeToFileSchema,
   handler: async ({ path, content, confirmation = true }) => {
     // Convert object content to JSON string if needed
@@ -150,12 +198,14 @@ const writeToFileTool = createTool({
       try {
         const file = await getFile(path);
         await app.vault.modify(file, contentString);
+        logInfo("[ComposerTools] writeToFile applied without preview", { path });
         return JSON.stringify({
           result: "accepted" as ApplyViewResult,
           message:
             "File changes applied without preview. Do not retry or attempt alternative approaches to modify this file in response to the current user request.",
         });
       } catch (error) {
+        logError("[ComposerTools] writeToFile failed without preview", { path, error });
         return JSON.stringify({
           result: "failed" as ApplyViewResult,
           message: `Error writing to file without preview: ${error?.message || error}`,
@@ -164,13 +214,320 @@ const writeToFileTool = createTool({
     }
 
     const result = await show_preview(path, contentString);
-    // Simple JSON wrapper for consistent parsing
+    logInfo("[ComposerTools] writeToFile preview result", { path, result });
     return JSON.stringify({
       result: result,
       message: `File change result: ${result}. Do not retry or attempt alternative approaches to modify this file in response to the current user request.`,
     });
   },
   timeoutMs: 0, // no timeout
+});
+
+const deleteNoteSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      `(Required) The path of the note to delete (relative to the root of the vault and including the file extension).`
+    ),
+});
+
+const deleteNoteTool = createTool({
+  name: "deleteNote",
+  description:
+    "Permanently delete a note file from the vault after validating that it exists and is a file.",
+  schema: deleteNoteSchema,
+  handler: async ({ path }: { path: string }) => {
+    try {
+      const file = app.vault.getAbstractFileByPath(path);
+
+      if (!file || !(file instanceof TFile)) {
+        return JSON.stringify({
+          ok: false,
+          message: `File not found or not a note at path: ${path}.`,
+        });
+      }
+
+      await app.vault.delete(file);
+      logInfo("[ComposerTools] deleteNote succeeded", { path });
+
+      return JSON.stringify({
+        ok: true,
+        message: `Note deleted: ${path}`,
+      });
+    } catch (error) {
+      logError("[ComposerTools] deleteNote failed", { path, error });
+      return JSON.stringify({
+        ok: false,
+        message: formatFsError(error, "delete note", path),
+      });
+    }
+  },
+  timeoutMs: 0,
+});
+
+const createFolderSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      `(Required) The folder path to create (relative to the root of the vault). Nested folders are allowed.`
+    ),
+});
+
+const createFolderTool = createTool({
+  name: "createFolder",
+  description:
+    "Create a new folder (and missing parent folders) in the vault. Safe to call repeatedly.",
+  schema: createFolderSchema,
+  handler: async ({ path }: { path: string }) => {
+    try {
+      await ensureFolderExists(path);
+      logInfo("[ComposerTools] createFolder succeeded", { path });
+
+      return JSON.stringify({
+        ok: true,
+        message: `Folder ensured: ${path}`,
+      });
+    } catch (error) {
+      logError("[ComposerTools] createFolder failed", { path, error });
+      return JSON.stringify({
+        ok: false,
+        message: formatFsError(error, "create folder", path),
+      });
+    }
+  },
+  timeoutMs: 0,
+});
+
+const deleteFolderSchema = z.object({
+  path: z
+    .string()
+    .describe(`(Required) The folder path to delete (relative to the root of the vault).`),
+  recursive: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      `(Optional) When true, delete the folder and all of its contents. When false, the folder must be empty. Default: false.`
+    ),
+});
+
+const deleteFolderTool = createTool({
+  name: "deleteFolder",
+  description:
+    "Delete a folder from the vault. Can be restricted to empty folders or used recursively.",
+  schema: deleteFolderSchema,
+  handler: async ({ path, recursive }: { path: string; recursive?: boolean }) => {
+    try {
+      const file = app.vault.getAbstractFileByPath(path);
+
+      if (!file || !(file instanceof TFolder)) {
+        return JSON.stringify({
+          ok: false,
+          message: `Folder not found at path: ${path}.`,
+        });
+      }
+
+      const adapter = app.vault.adapter as any;
+      const listing = await adapter.list(path);
+
+      if (!recursive && ((listing.files?.length ?? 0) > 0 || (listing.folders?.length ?? 0) > 0)) {
+        return JSON.stringify({
+          ok: false,
+          message: `Folder is not empty: ${path}. Set recursive=true to delete with contents.`,
+        });
+      }
+
+      if (recursive) {
+        await deleteFolderRecursively(path);
+      } else {
+        await adapter.rmdir(path);
+      }
+
+      logInfo("[ComposerTools] deleteFolder succeeded", { path, recursive });
+
+      return JSON.stringify({
+        ok: true,
+        message: `Folder deleted: ${path}`,
+      });
+    } catch (error) {
+      logError("[ComposerTools] deleteFolder failed", { path, recursive, error });
+      return JSON.stringify({
+        ok: false,
+        message: formatFsError(error, "delete folder", path),
+      });
+    }
+  },
+  timeoutMs: 0,
+});
+
+const moveFileSchema = z.object({
+  fromPath: z
+    .string()
+    .describe(
+      `(Required) The current path of the file to move (relative to the root of the vault).`
+    ),
+  toPath: z
+    .string()
+    .describe(
+      `(Required) The new path of the file (including the file name and extension, relative to the root of the vault).`
+    ),
+  createMissingFolders: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      `(Optional) When true, create any missing parent folders in the target path. Default: true.`
+    ),
+});
+
+const moveFileTool = createTool({
+  name: "moveFile",
+  description:
+    "Move or rename a single file within the vault. Uses Obsidian's file manager to safely update all links.",
+  schema: moveFileSchema,
+  handler: async ({
+    fromPath,
+    toPath,
+    createMissingFolders = true,
+  }: {
+    fromPath: string;
+    toPath: string;
+    createMissingFolders?: boolean;
+  }) => {
+    try {
+      const file = app.vault.getAbstractFileByPath(fromPath);
+
+      if (!file || !(file instanceof TFile)) {
+        return JSON.stringify({
+          ok: false,
+          message: `Source file not found or not a note at path: ${fromPath}.`,
+        });
+      }
+
+      const existingTarget = app.vault.getAbstractFileByPath(toPath);
+      if (existingTarget) {
+        return JSON.stringify({
+          ok: false,
+          message: `Target path already exists: ${toPath}. Choose a different path.`,
+        });
+      }
+
+      if (createMissingFolders && toPath.includes("/")) {
+        const folder = toPath.split("/").slice(0, -1).join("/");
+        if (folder) {
+          await ensureFolderExists(folder);
+        }
+      }
+
+      await app.fileManager.renameFile(file, toPath);
+      logInfo("[ComposerTools] moveFile succeeded", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+      });
+
+      return JSON.stringify({
+        ok: true,
+        message: `File moved from ${fromPath} to ${toPath}`,
+      });
+    } catch (error) {
+      logError("[ComposerTools] moveFile failed", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+        error,
+      });
+      return JSON.stringify({
+        ok: false,
+        message: formatFsError(error, "move file", `${fromPath}" -> "${toPath}`),
+      });
+    }
+  },
+  timeoutMs: 0,
+});
+
+const moveFolderSchema = z.object({
+  fromPath: z
+    .string()
+    .describe(
+      `(Required) The current path of the folder to move (relative to the root of the vault).`
+    ),
+  toPath: z
+    .string()
+    .describe(`(Required) The new path of the folder (relative to the root of the vault).`),
+  createMissingFolders: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      `(Optional) When true, create any missing parent folders in the target path. Default: true.`
+    ),
+});
+
+const moveFolderTool = createTool({
+  name: "moveFolder",
+  description:
+    "Move or rename a folder (and its contents) within the vault. Uses Obsidian's file manager to safely update all links.",
+  schema: moveFolderSchema,
+  handler: async ({
+    fromPath,
+    toPath,
+    createMissingFolders = true,
+  }: {
+    fromPath: string;
+    toPath: string;
+    createMissingFolders?: boolean;
+  }) => {
+    try {
+      const folder = app.vault.getAbstractFileByPath(fromPath);
+
+      if (!folder || !(folder instanceof TFolder)) {
+        return JSON.stringify({
+          ok: false,
+          message: `Source folder not found at path: ${fromPath}.`,
+        });
+      }
+
+      const existingTarget = app.vault.getAbstractFileByPath(toPath);
+      if (existingTarget) {
+        return JSON.stringify({
+          ok: false,
+          message: `Target folder path already exists: ${toPath}. Choose a different path.`,
+        });
+      }
+
+      if (createMissingFolders && toPath.includes("/")) {
+        const parentFolder = toPath.split("/").slice(0, -1).join("/");
+        if (parentFolder) {
+          await ensureFolderExists(parentFolder);
+        }
+      }
+
+      await app.fileManager.renameFile(folder, toPath);
+      logInfo("[ComposerTools] moveFolder succeeded", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+      });
+
+      return JSON.stringify({
+        ok: true,
+        message: `Folder moved from ${fromPath} to ${toPath}`,
+      });
+    } catch (error) {
+      logError("[ComposerTools] moveFolder failed", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+        error,
+      });
+      return JSON.stringify({
+        ok: false,
+        message: formatFsError(error, "move folder", `${fromPath}" -> "${toPath}`),
+      });
+    }
+  },
+  timeoutMs: 0,
 });
 
 const replaceInFileSchema = z.object({
@@ -397,7 +754,13 @@ function parseSearchReplaceBlocks(
 export {
   writeToFileTool,
   replaceInFileTool,
+  deleteNoteTool,
+  createFolderTool,
+  deleteFolderTool,
+  moveFileTool,
+  moveFolderTool,
   parseSearchReplaceBlocks,
   normalizeLineEndings,
   replaceWithLineEndingAwareness,
+  formatFsError,
 };

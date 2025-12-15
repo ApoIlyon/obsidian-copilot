@@ -2,6 +2,7 @@ import {
   parseSearchReplaceBlocks,
   normalizeLineEndings,
   replaceWithLineEndingAwareness,
+  formatFsError,
 } from "./ComposerTools";
 
 describe("parseSearchReplaceBlocks", () => {
@@ -471,5 +472,65 @@ describe("replaceWithLineEndingAwareness", () => {
       const result = replaceWithLineEndingAwareness(content, searchText, replaceText);
       expect(result).toBe("new\r\ntest new\r\nmore new\r\n");
     });
+  });
+});
+
+describe("formatFsError", () => {
+  const operation = "delete file";
+  const targetPath = "path/to/file.md";
+
+  test("includes operation, path, and base error message", () => {
+    const error = new Error("something went wrong");
+    const message = formatFsError(error, operation, targetPath);
+
+    expect(message).toContain(`Failed to ${operation} "${targetPath}".`);
+    expect(message).toContain("something went wrong");
+  });
+
+  test("adds friendly message for permission errors", () => {
+    const error: any = new Error("permission denied");
+    error.code = "EACCES";
+
+    const message = formatFsError(error, operation, targetPath);
+
+    expect(message).toContain("Insufficient permissions");
+    expect(message).toContain("(code EACCES)");
+  });
+
+  test("adds friendly message for busy errors", () => {
+    const error: any = new Error("resource busy");
+    error.code = "EBUSY";
+
+    const message = formatFsError(error, operation, targetPath);
+
+    expect(message).toContain("currently in use");
+    expect(message).toContain("(code EBUSY)");
+  });
+
+  test("adds friendly message for no space errors", () => {
+    const error: any = new Error("no space left on device");
+    error.code = "ENOSPC";
+
+    const message = formatFsError(error, operation, targetPath);
+
+    expect(message).toContain("No space left on device.");
+    expect(message).toContain("(code ENOSPC)");
+  });
+
+  test("adds friendly message for read-only filesystem errors", () => {
+    const error: any = new Error("read-only file system");
+    error.code = "EROFS";
+
+    const message = formatFsError(error, operation, targetPath);
+
+    expect(message).toContain("read-only");
+    expect(message).toContain("(code EROFS)");
+  });
+
+  test("falls back to technical details when no known code", () => {
+    const message = formatFsError("plain error", operation, targetPath);
+
+    expect(message).toContain(`Failed to ${operation} "${targetPath}".`);
+    expect(message).toContain("plain error");
   });
 });

@@ -17,6 +17,7 @@ export interface ApplyViewState {
   changes: Change[];
   path: string;
   resultCallback?: (result: ApplyViewResult) => void;
+  applyAllCallback?: (result: ApplyViewResult) => void;
 }
 
 // Extended Change interface to track user acceptance
@@ -147,33 +148,29 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
     );
   }
 
-  // Apply all changes regardless of whether they have been marked as accepted
   const handleAccept = async () => {
     try {
-      // Mark all undecided changes as accepted
       const updatedDiff = diff.map((change) =>
         change.accepted === null ? { ...change, accepted: true } : change
       );
 
       const result = await applyDecidedChangesToFile(updatedDiff);
-      close(result ? "accepted" : "failed"); // Pass result
+      close(result ? "accepted" : "failed");
     } catch (error) {
       logError("Error applying changes:", error);
       new Notice(`Error applying changes: ${error.message}`);
-      close("failed"); // fallback, but you may want to handle this differently
+      close("failed");
     }
   };
 
-  // Handle rejecting all changes
   const handleReject = async () => {
     try {
-      // Mark all undecided changes as rejected
       const updatedDiff = diff.map((change) =>
         change.accepted === null ? { ...change, accepted: false } : change
       );
 
       const result = await applyDecidedChangesToFile(updatedDiff);
-      close(result ? "rejected" : "failed"); // Pass result
+      close(result ? "rejected" : "failed");
     } catch (error) {
       logError("Error applying changes:", error);
       new Notice(`Error applying changes: ${error.message}`);
@@ -194,14 +191,12 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
     return await app.vault.create(file_path, "");
   };
 
-  // Shared function to apply changes to file
   const applyDecidedChangesToFile = async (updatedDiff: ExtendedChange[]) => {
-    // Apply changes based on their accepted status
     const newContent = updatedDiff
       .filter((change) => {
-        if (change.added) return change.accepted === true; // Include if accepted
-        if (change.removed) return change.accepted === false; // Include if rejected
-        return true; // Keep unchanged lines
+        if (change.added) return change.accepted === true;
+        if (change.removed) return change.accepted === false;
+        return true;
       })
       .map((change) => change.value)
       .join("");
@@ -216,6 +211,38 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
     await app.vault.modify(file, newContent);
     new Notice("Changes applied successfully");
     return true;
+  };
+
+  const handleAcceptAll = async () => {
+    try {
+      const updatedDiff = diff.map((change) => ({
+        ...change,
+        accepted: true,
+      }));
+
+      const result = await applyDecidedChangesToFile(updatedDiff);
+      if (result && state.applyAllCallback) {
+        state.applyAllCallback("accepted");
+      }
+      close(result ? "accepted" : "failed");
+    } catch (error) {
+      logError("Error applying changes:", error);
+      new Notice(`Error applying changes: ${error.message}`);
+      close("failed");
+    }
+  };
+
+  const handleRejectAll = async () => {
+    try {
+      if (state.applyAllCallback) {
+        state.applyAllCallback("rejected");
+      }
+      close("rejected");
+    } catch (error) {
+      logError("Error rejecting all changes:", error);
+      new Notice(`Error rejecting changes: ${error.message}`);
+      close("failed");
+    }
   };
 
   // Function to focus on the next change block or scroll to top if it's the last block
@@ -306,6 +333,18 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
           <Check className="tw-size-4" />
           Accept
         </Button>
+        {state.applyAllCallback && (
+          <>
+            <Button variant="destructive" size="sm" onClick={handleRejectAll}>
+              <XIcon className="tw-size-4" />
+              Reject All
+            </Button>
+            <Button variant="success" size="sm" onClick={handleAcceptAll}>
+              <Check className="tw-size-4" />
+              Accept All
+            </Button>
+          </>
+        )}
       </div>
       <div className="tw-flex tw-items-center tw-border-b tw-border-solid tw-border-border tw-p-2 tw-text-sm tw-font-medium">
         {state.path}

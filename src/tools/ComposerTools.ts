@@ -43,14 +43,48 @@ async function getFile(file_path: string): Promise<TFile> {
   }
 }
 
+let previewAutoMode: ApplyViewResult | null = null;
+let previewAutoModeTimestamp = 0;
+const PREVIEW_AUTO_MODE_TIMEOUT = 60000;
+
+function setPreviewAutoMode(mode: ApplyViewResult) {
+  previewAutoMode = mode;
+  previewAutoModeTimestamp = Date.now();
+}
+
+function getPreviewAutoMode(): ApplyViewResult | null {
+  if (!previewAutoMode) {
+    return null;
+  }
+
+  if (Date.now() - previewAutoModeTimestamp > PREVIEW_AUTO_MODE_TIMEOUT) {
+    previewAutoMode = null;
+    return null;
+  }
+
+  return previewAutoMode;
+}
+
 /**
  * Show the ApplyView preview UI for file changes and return the user decision.
  * @param file_path - Vault-relative path to the file
  * @param content - Target content to compare against current file content
  */
 async function show_preview(file_path: string, content: string): Promise<ApplyViewResult> {
+  const autoMode = getPreviewAutoMode();
+  if (autoMode === "rejected") {
+    logInfo("[ComposerTools] preview auto-rejected", { path: file_path });
+    return "rejected";
+  }
+
   const file = await getFile(file_path);
   const activeFile = app.workspace.getActiveFile();
+
+  if (autoMode === "accepted") {
+    await app.vault.modify(file, content);
+    logInfo("[ComposerTools] preview auto-accepted", { path: file_path });
+    return "accepted";
+  }
 
   if (file && (!activeFile || activeFile.path !== file_path)) {
     // If target file is not the active file, open the target file in the current leaf
@@ -76,6 +110,11 @@ async function show_preview(file_path: string, content: string): Promise<ApplyVi
         path: file_path,
         resultCallback: (result: ApplyViewResult) => {
           resolve(result);
+        },
+        applyAllCallback: (mode: ApplyViewResult) => {
+          if (mode === "accepted" || mode === "rejected") {
+            setPreviewAutoMode(mode);
+          }
         },
       },
     });

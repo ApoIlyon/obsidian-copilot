@@ -130,6 +130,7 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
   });
 
   const [isManageMode, setIsManageMode] = useState(false);
+  const [showResult, setShowResult] = useState(false);
 
   // Group changes into blocks for better UI presentation
   const changeBlocks = getChangeBlocks(diff);
@@ -197,6 +198,17 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
     return changes
       .filter((change) => {
         if (change.added) return change.accepted === true;
+        if (change.removed) return change.accepted === false;
+        return true;
+      })
+      .map((change) => change.value)
+      .join("");
+  };
+
+  const buildPreviewResultFromDiff = (changes: ExtendedChange[]) => {
+    return changes
+      .filter((change) => {
+        if (change.added) return change.accepted !== false;
         if (change.removed) return change.accepted === false;
         return true;
       })
@@ -357,36 +369,54 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
     .map((change) => change.value)
     .join("");
 
-  const previewContent = buildContentFromDiff(diff);
+  const previewContent = buildPreviewResultFromDiff(diff);
 
   return (
     <div className="tw-relative tw-flex tw-h-full tw-flex-col">
-      {isManageMode && (
-        <div className="tw-fixed tw-bottom-4 tw-left-1/2 tw-z-[9999] tw-flex tw-translate-x-[-50%] tw-gap-2 tw-rounded-md tw-border tw-border-solid tw-border-border tw-bg-secondary tw-p-2 tw-shadow-lg tw-transition-opacity tw-duration-200">
-          <Button variant="destructive" size="sm" onClick={handleReject}>
-            <XIcon className="tw-size-4" />
-            Reject
-          </Button>
-          <Button variant="success" size="sm" onClick={handleAccept}>
-            <Check className="tw-size-4" />
-            Accept
-          </Button>
-          <Button variant="destructive" size="sm" onClick={handleRejectAll}>
-            <XIcon className="tw-size-4" />
-            Reject All
-          </Button>
-          <Button variant="success" size="sm" onClick={handleAcceptAll}>
-            <Check className="tw-size-4" />
-            Accept All
-          </Button>
-        </div>
-      )}
+      <div className="tw-fixed tw-bottom-4 tw-left-1/2 tw-z-[9999] tw-flex tw-translate-x-[-50%] tw-gap-2 tw-rounded-md tw-border tw-border-solid tw-border-border tw-bg-secondary tw-p-2 tw-shadow-lg tw-transition-opacity tw-duration-200">
+        <Button variant="destructive" size="sm" onClick={handleReject}>
+          <XIcon className="tw-size-4" />
+          Reject
+        </Button>
+        <Button variant="success" size="sm" onClick={handleAccept}>
+          <Check className="tw-size-4" />
+          Accept
+        </Button>
+        <Button variant="destructive" size="sm" onClick={handleRejectAll}>
+          <XIcon className="tw-size-4" />
+          Reject All
+        </Button>
+        <Button variant="success" size="sm" onClick={handleAcceptAll}>
+          <Check className="tw-size-4" />
+          Accept All
+        </Button>
+      </div>
       <div className="tw-flex tw-items-center tw-justify-between tw-border-b tw-border-solid tw-border-border tw-p-2 tw-text-sm tw-font-medium">
         <div className="tw-flex tw-flex-1 tw-items-center tw-gap-4">
           <span className="tw-flex-1 tw-truncate">{state.path}</span>
-          <span className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted">
-            {isManageMode ? "Result" : "Original"}
-          </span>
+          <div className="tw-flex tw-items-center tw-gap-1">
+            <button
+              type="button"
+              className={cn(
+                "tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted",
+                !showResult && "tw-font-semibold tw-text-normal"
+              )}
+              onClick={() => setShowResult(false)}
+            >
+              Original
+            </button>
+            <span className="tw-text-xs tw-text-muted">→</span>
+            <button
+              type="button"
+              className={cn(
+                "tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted",
+                showResult && "tw-font-semibold tw-text-normal"
+              )}
+              onClick={() => setShowResult(true)}
+            >
+              Result
+            </button>
+          </div>
           <span className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-muted">Proposed</span>
         </div>
         <Button
@@ -402,7 +432,7 @@ const ApplyViewRoot: React.FC<ApplyViewRootProps> = ({ app, state, close }) => {
       <div className="tw-flex tw-flex-1 tw-overflow-hidden">
         <div className="tw-flex-1 tw-overflow-auto tw-border-r tw-border-solid tw-border-border tw-p-2">
           <div className="tw-whitespace-pre-wrap tw-font-mono tw-text-sm tw-text-normal">
-            {isManageMode ? previewContent : originalContent}
+            {showResult ? previewContent : originalContent}
           </div>
         </div>
 

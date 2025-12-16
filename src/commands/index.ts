@@ -18,7 +18,7 @@ import { checkIsPlusUser } from "@/plusUtils";
 // Debug modals removed with search v3
 import CopilotPlugin from "@/main";
 import { getAllQAMarkdownContent } from "@/search/searchUtils";
-import { CopilotSettings, getSettings, updateSetting } from "@/settings/model";
+import { CopilotSettings } from "@/settings/model";
 import { SelectedTextContext } from "@/types/message";
 import { ensureFolderExists, isSourceModeOn } from "@/utils";
 import { Editor, MarkdownView, Notice, TFile } from "obsidian";
@@ -310,7 +310,76 @@ export function registerCommands(
     }
   });
 
-  // Debug commands (only when debug mode is enabled)
+  addCommand(plugin, COMMAND_IDS.INSPECT_COPILOT_INDEX_BY_NOTE_PATHS, async () => {
+    try {
+      const activeFile = plugin.app.workspace.getActiveFile();
+      if (!activeFile) {
+        new Notice("No active file. Please open a note first.");
+        return;
+      }
+
+      const VectorStoreManager = (await import("@/search/vectorStoreManager")).default;
+      const { DBOperations } = await import("@/search/dbOperations");
+      const db = await VectorStoreManager.getInstance().getDb();
+      const hits = await DBOperations.getDocsByPath(db, activeFile.path);
+
+      if (!hits || hits.length === 0) {
+        new Notice(`No embedding data found for: ${activeFile.path}`);
+        return;
+      }
+
+      // Map hits to chunks (getDocsByPath returns {document, score} format)
+      const chunks = hits.map((hit: any) => hit.document);
+      const content = [
+        `# Embedding Debug: ${activeFile.basename}`,
+        "",
+        `**Path:** ${activeFile.path}`,
+        `**Chunks:** ${chunks.length}`,
+        `**Embedding Model:** ${chunks[0]?.embeddingModel || "unknown"}`,
+        "",
+        ...chunks.flatMap((chunk: any, index: number) => {
+          const embedding = chunk.embedding || [];
+          const preview = embedding
+            .slice(0, 10)
+            .map((v: number) => v.toFixed(6))
+            .join(", ");
+          return [
+            `## Chunk ${index + 1}`,
+            `- **ID:** ${chunk.id}`,
+            `- **Content Preview:** "${(chunk.content || "").substring(0, 200)}..."`,
+            `- **Vector Length:** ${embedding.length}`,
+            `- **Vector Preview:** [${preview}${embedding.length > 10 ? ", ..." : ""}]`,
+            `- **Tags:** ${(chunk.tags || []).join(", ") || "none"}`,
+            `- **Characters:** ${chunk.nchars || 0}`,
+            "",
+          ];
+        }),
+      ].join("\n");
+
+      // Create the debug file
+      const fileName = `Copilot-Embedding-Debug-${activeFile.basename.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+      const folderPath = "copilot";
+      const filePath = `${folderPath}/${fileName}`;
+
+      await ensureFolderExists(folderPath);
+
+      const existingFile = plugin.app.vault.getAbstractFileByPath(filePath);
+      if (existingFile) {
+        await plugin.app.vault.modify(existingFile as TFile, content);
+      } else {
+        await plugin.app.vault.create(filePath, content);
+      }
+
+      const file = plugin.app.vault.getAbstractFileByPath(filePath);
+      if (file) {
+        await plugin.app.workspace.getLeaf().openFile(file as TFile);
+        new Notice(`Embedding debug info for ${chunks.length} chunk(s)`);
+      }
+    } catch (error) {
+      logError("Error inspecting embeddings:", error);
+      new Notice("Failed to inspect embeddings. Is the index loaded?");
+    }
+  });
 
   // Add clear Copilot cache command
   addCommand(plugin, COMMAND_IDS.CLEAR_COPILOT_CACHE, async () => {
@@ -323,10 +392,6 @@ export function registerCommands(
       // Clear file content cache (get FileCache instance and clear it)
       const fileCache = FileCache.getInstance<string>();
       await fileCache.clear();
-
-      // Clear autocomplete cache
-      const { AutocompleteCache } = await import("@/cache/autocompleteCache");
-      AutocompleteCache.getInstance().clear();
 
       new Notice("All Copilot caches cleared successfully");
     } catch (error) {
@@ -355,14 +420,6 @@ export function registerCommands(
       logError("Error clearing Copilot log file:", error);
       new Notice("Failed to clear Copilot log file.");
     }
-  });
-
-  // Add toggle autocomplete command
-  addCommand(plugin, COMMAND_IDS.TOGGLE_AUTOCOMPLETE, () => {
-    const currentSettings = getSettings();
-    const newValue = !currentSettings.enableAutocomplete;
-    updateSetting("enableAutocomplete", newValue);
-    new Notice(`Copilot autocomplete ${newValue ? "enabled" : "disabled"}`);
   });
 
   // Add selection to chat context command (manual)

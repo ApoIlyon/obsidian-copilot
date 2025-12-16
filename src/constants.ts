@@ -1,5 +1,4 @@
 import { CustomModel } from "@/aiParams";
-import { AcceptKeyOption } from "@/autocomplete/codemirrorIntegration";
 import { type CopilotSettings } from "@/settings/model";
 import { v4 as uuidv4 } from "uuid";
 import { ChainType } from "./chainFactory";
@@ -724,7 +723,6 @@ export const COMMAND_IDS = {
   REMOVE_FILES_FROM_COPILOT_INDEX: "remove-files-from-copilot-index",
   SEARCH_ORAMA_DB: "copilot-search-orama-db",
   TOGGLE_COPILOT_CHAT_WINDOW: "chat-toggle-window",
-  TOGGLE_AUTOCOMPLETE: "toggle-autocomplete",
   ADD_SELECTION_TO_CHAT_CONTEXT: "add-selection-to-chat-context",
   ADD_CUSTOM_COMMAND: "add-custom-command",
   APPLY_CUSTOM_COMMAND: "apply-custom-command",
@@ -752,7 +750,6 @@ export const COMMAND_NAMES: Record<CommandId, string> = {
   [COMMAND_IDS.REMOVE_FILES_FROM_COPILOT_INDEX]: "Remove files from Copilot index (debug)",
   [COMMAND_IDS.SEARCH_ORAMA_DB]: "Search semantic index (debug)",
   [COMMAND_IDS.TOGGLE_COPILOT_CHAT_WINDOW]: "Toggle Copilot Chat Window",
-  [COMMAND_IDS.TOGGLE_AUTOCOMPLETE]: "Toggle autocomplete",
   [COMMAND_IDS.ADD_SELECTION_TO_CHAT_CONTEXT]: "Add selection to chat context",
   [COMMAND_IDS.ADD_CUSTOM_COMMAND]: "Add new custom command",
   [COMMAND_IDS.APPLY_CUSTOM_COMMAND]: "Apply custom command",
@@ -762,13 +759,6 @@ export const COMMAND_NAMES: Record<CommandId, string> = {
 };
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];
-
-export const AUTOCOMPLETE_CONFIG = {
-  DELAY_MS: 600,
-  MIN_TRIGGER_LENGTH: 3,
-  MAX_CONTEXT_LENGTH: 10000,
-  KEYBIND: "Tab" as AcceptKeyOption,
-} as const;
 
 export const RESTRICTION_MESSAGES = {
   NON_MARKDOWN_FILES_RESTRICTED:
@@ -828,6 +818,7 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   debug: false,
   enableEncryption: false,
   maxSourceChunks: 15,
+  enableInlineCitations: true,
   groqApiKey: "",
   activeModels: BUILTIN_CHAT_MODELS,
   activeEmbeddingModels: BUILTIN_EMBEDDING_MODELS,
@@ -844,10 +835,6 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   /** @deprecated */
   inlineEditCommands: [],
   projectList: [],
-  enableAutocomplete: false,
-  autocompleteAcceptKey: AUTOCOMPLETE_CONFIG.KEYBIND,
-  allowAdditionalContext: true,
-  enableWordCompletion: false,
   lastDismissedVersion: null,
   passMarkdownImages: true,
   enableAutonomousAgent: true,

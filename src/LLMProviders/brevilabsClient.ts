@@ -6,20 +6,6 @@ import { turnOffPlus, turnOnPlus } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
 import { arrayBufferToBase64 } from "@/utils/base64";
 
-export interface BrocaResponse {
-  response: {
-    tool_calls: Array<{
-      tool: string;
-      args: {
-        [key: string]: any;
-      };
-    }>;
-    salience_terms: string[];
-  };
-  elapsed_time_ms: number;
-  detail?: string;
-}
-
 export interface RerankResponse {
   response: {
     object: string;
@@ -79,20 +65,6 @@ export interface Youtube4llmResponse {
 export interface LicenseResponse {
   is_valid: boolean;
   plan: string;
-}
-
-export interface AutocompleteResponse {
-  response: {
-    completion: string;
-  };
-  elapsed_time_ms: number;
-}
-
-export interface WordCompleteResponse {
-  response: {
-    selected_word: string;
-  };
-  elapsed_time_ms: number;
 }
 
 export class BrevilabsClient {
@@ -261,21 +233,6 @@ export class BrevilabsClient {
     return { isValid: true, plan: data?.plan };
   }
 
-  async broca(userMessage: string, isProjectMode: boolean): Promise<BrocaResponse> {
-    const { data, error } = await this.makeRequest<BrocaResponse>("/broca", {
-      message: userMessage,
-      is_project_mode: isProjectMode,
-    });
-    if (error) {
-      throw error;
-    }
-    if (!data) {
-      throw new Error("No data returned from broca");
-    }
-
-    return data;
-  }
-
   async rerank(query: string, documents: string[]): Promise<RerankResponse> {
     const { data, error } = await this.makeRequest<RerankResponse>("/rerank", {
       query,
@@ -413,45 +370,6 @@ export class BrevilabsClient {
       throw new Error("No data returned from youtube4llm");
     }
 
-    return data;
-  }
-
-  async autocomplete(
-    prefix: string,
-    noteContext: string = "",
-    relevant_notes: string = ""
-  ): Promise<AutocompleteResponse> {
-    const { data, error } = await this.makeRequest<AutocompleteResponse>("/autocomplete", {
-      prompt: prefix,
-      note_context: noteContext,
-      relevant_notes: relevant_notes,
-      max_tokens: 64,
-    });
-    if (error) {
-      throw error;
-    }
-    if (!data) {
-      throw new Error("No data returned from autocomplete");
-    }
-    return data;
-  }
-
-  async wordcomplete(
-    prefix: string,
-    suffix: string = "",
-    suggestions: string[]
-  ): Promise<WordCompleteResponse> {
-    const { data, error } = await this.makeRequest<WordCompleteResponse>("/wordcomplete", {
-      prefix: prefix,
-      suffix: suffix,
-      suggestions: suggestions,
-    });
-    if (error) {
-      throw error;
-    }
-    if (!data) {
-      throw new Error("No data returned from wordcomplete");
-    }
     return data;
   }
 }

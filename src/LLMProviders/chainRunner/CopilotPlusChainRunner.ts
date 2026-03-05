@@ -17,7 +17,15 @@ import { logInfo, logWarn } from "@/logger";
 import { checkIsPlusUser } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
 import { getSystemPromptWithMemory } from "@/system-prompts/systemPromptBuilder";
-import { writeToFileTool } from "@/tools/ComposerTools";
+import {
+  createFolderTool,
+  deleteFolderTool,
+  deleteNoteTool,
+  moveFileTool,
+  moveFolderTool,
+  replaceInFileTool,
+  writeToFileTool,
+} from "@/tools/ComposerTools";
 import { ToolManager } from "@/tools/toolManager";
 import { ToolResultFormatter } from "@/tools/ToolResultFormatter";
 import { ToolRegistry } from "@/tools/ToolRegistry";
@@ -681,7 +689,15 @@ Otherwise omit RETURN_ALL or output: [RETURN_ALL: false]`;
       contextEnvelope: userMessage.contextEnvelope,
     });
 
-    const actionStreamer = new ActionBlockStreamer(ToolManager, writeToFileTool);
+    const actionStreamer = new ActionBlockStreamer(ToolManager, {
+      writeToFile: writeToFileTool,
+      replaceInFile: replaceInFileTool,
+      deleteNote: deleteNoteTool,
+      createFolder: createFolderTool,
+      deleteFolder: deleteFolderTool,
+      moveFile: moveFileTool,
+      moveFolder: moveFolderTool,
+    });
 
     // Wrap the stream call with warning suppression
     const chatStream = await withSuppressedTokenWarnings(() =>

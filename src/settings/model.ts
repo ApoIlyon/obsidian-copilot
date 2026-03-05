@@ -180,6 +180,8 @@ export interface CopilotSettings {
   quickCommandIncludeNoteContext: boolean;
   /** Automatically add text selections to chat context */
   autoIncludeTextSelection: boolean;
+  /** Whether file operations require a confirmation modal before execution */
+  confirmFileOperations: boolean;
   autoAddSelectionToContext: boolean;
   /** Automatically accept file edits without showing preview confirmation */
   autoAcceptEdits: boolean;
@@ -531,6 +533,11 @@ export function sanitizeSettings(settings: CopilotSettings): CopilotSettings {
   // Ensure autoAcceptEdits has a default value
   if (typeof sanitizedSettings.autoAcceptEdits !== "boolean") {
     sanitizedSettings.autoAcceptEdits = DEFAULT_SETTINGS.autoAcceptEdits;
+  }
+
+  // Ensure confirmFileOperations has a default value
+  if (typeof sanitizedSettings.confirmFileOperations !== "boolean") {
+    sanitizedSettings.confirmFileOperations = DEFAULT_SETTINGS.confirmFileOperations;
   }
 
   // Ensure defaultSendShortcut has a valid value

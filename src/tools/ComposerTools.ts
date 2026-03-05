@@ -1,12 +1,13 @@
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import { APPLY_VIEW_TYPE } from "@/components/composer/ApplyView";
+import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { diffTrimmedLines } from "diff";
 import { ApplyViewResult } from "@/types";
 import { z } from "zod";
 import { createLangChainTool } from "./createLangChainTool";
 import { ensureFolderExists, sanitizeFilePath } from "@/utils";
 import { getSettings } from "@/settings/model";
-import { logWarn } from "@/logger";
+import { logError, logInfo, logWarn } from "@/logger";
 
 async function getFile(file_path: string): Promise<TFile> {
   let file = app.vault.getAbstractFileByPath(file_path);
@@ -186,6 +187,434 @@ const writeToFileTool = createLangChainTool({
       result: result,
       message: `File change result: ${result}. Do not retry or attempt alternative approaches to modify this file in response to the current user request.`,
     };
+  },
+});
+
+/**
+ * Formats a filesystem operation error with contextual details and actionable hints.
+ *
+ * @param error - Original error thrown by the adapter or vault APIs.
+ * @param operation - Human-readable operation label.
+ * @param targetPath - Vault-relative path involved in the operation.
+ * @returns User-facing error string.
+ */
+function formatFsError(error: unknown, operation: string, targetPath: string): string {
+  const err = error as { code?: unknown; message?: unknown };
+  const code = typeof err?.code === "string" ? err.code : undefined;
+  const baseMessage =
+    typeof err?.message === "string"
+      ? err.message
+      : typeof error === "string"
+        ? error
+        : "Unknown filesystem error";
+
+  const codeSuffix = code ? ` (code ${code})` : "";
+  let hint = "";
+
+  if (code === "EACCES" || code === "EPERM") {
+    hint = "Insufficient permissions for this operation.";
+  } else if (code === "EBUSY") {
+    hint = "The target is currently in use by another process.";
+  } else if (code === "ENOSPC") {
+    hint = "No space left on device.";
+  } else if (code === "EROFS") {
+    hint = "The target is on a read-only file system.";
+  }
+
+  const hintSuffix = hint ? ` ${hint}` : "";
+  return `Failed to ${operation} "${targetPath}". ${baseMessage}${codeSuffix}.${hintSuffix}`.trim();
+}
+
+/**
+ * Prompts the user for confirmation before executing potentially destructive file operations.
+ *
+ * @param content - Message displayed in the confirmation modal.
+ * @param title - Confirmation modal title.
+ * @param confirmButtonText - Text shown on the confirm action button.
+ * @returns True when operation is approved, otherwise false.
+ */
+async function confirmFileOperation(
+  content: string,
+  title: string,
+  confirmButtonText: string
+): Promise<boolean> {
+  const settings = getSettings();
+  if (!settings.confirmFileOperations) {
+    return true;
+  }
+
+  return new Promise((resolve) => {
+    const modal = new ConfirmModal(
+      app,
+      () => resolve(true),
+      content,
+      title,
+      confirmButtonText,
+      "Cancel",
+      () => resolve(false)
+    );
+    modal.open();
+  });
+}
+
+/**
+ * Recursively deletes a folder and all nested files/folders.
+ *
+ * @param folderPath - Vault-relative folder path.
+ */
+async function deleteFolderRecursively(folderPath: string): Promise<void> {
+  const folder = app.vault.getAbstractFileByPath(folderPath);
+  if (!(folder instanceof TFolder)) {
+    return;
+  }
+
+  const children = [...folder.children];
+  for (const child of children) {
+    if (child instanceof TFile) {
+      await app.vault.delete(child);
+      continue;
+    }
+
+    if (child instanceof TFolder) {
+      await deleteFolderRecursively(child.path);
+    }
+  }
+
+  const remainingFolder = app.vault.getAbstractFileByPath(folderPath);
+  if (remainingFolder instanceof TFolder) {
+    await app.vault.delete(remainingFolder, true);
+  }
+}
+
+const deleteNoteSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      `(Required) The path of the note to delete (relative to the root of the vault and including the file extension).`
+    ),
+});
+
+const deleteNoteTool = createLangChainTool({
+  name: "deleteNote",
+  description:
+    "Permanently delete a note file from the vault after validating that it exists and is a file.",
+  schema: deleteNoteSchema,
+  func: async ({ path }) => {
+    try {
+      const confirmed = await confirmFileOperation(
+        `Delete note:\n${path}\n\nThis action cannot be undone.`,
+        "Delete Note",
+        "Delete"
+      );
+      if (!confirmed) {
+        return {
+          ok: false,
+          message: "Delete note operation cancelled by user.",
+        };
+      }
+
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        return {
+          ok: false,
+          message: `File not found or not a note at path: ${path}.`,
+        };
+      }
+
+      await app.vault.delete(file);
+      logInfo("[ComposerTools] deleteNote succeeded", { path });
+      return {
+        ok: true,
+        message: `Note deleted: ${path}`,
+      };
+    } catch (error) {
+      logError("[ComposerTools] deleteNote failed", { path, error });
+      return {
+        ok: false,
+        message: formatFsError(error, "delete note", path),
+      };
+    }
+  },
+});
+
+const createFolderSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      `(Required) The folder path to create (relative to the root of the vault). Nested folders are allowed.`
+    ),
+});
+
+const createFolderTool = createLangChainTool({
+  name: "createFolder",
+  description:
+    "Create a new folder (and missing parent folders) in the vault. Safe to call repeatedly.",
+  schema: createFolderSchema,
+  func: async ({ path }) => {
+    try {
+      const confirmed = await confirmFileOperation(
+        `Create folder (including missing parents):\n${path}`,
+        "Create Folder",
+        "Create"
+      );
+      if (!confirmed) {
+        return {
+          ok: false,
+          message: "Create folder operation cancelled by user.",
+        };
+      }
+
+      await ensureFolderExists(path);
+      logInfo("[ComposerTools] createFolder succeeded", { path });
+      return {
+        ok: true,
+        message: `Folder ensured: ${path}`,
+      };
+    } catch (error) {
+      logError("[ComposerTools] createFolder failed", { path, error });
+      return {
+        ok: false,
+        message: formatFsError(error, "create folder", path),
+      };
+    }
+  },
+});
+
+const deleteFolderSchema = z.object({
+  path: z
+    .string()
+    .describe(`(Required) The folder path to delete (relative to the root of the vault).`),
+  recursive: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      `(Optional) When true, delete the folder and all of its contents. When false, the folder must be empty. Default: false.`
+    ),
+});
+
+const deleteFolderTool = createLangChainTool({
+  name: "deleteFolder",
+  description:
+    "Delete a folder from the vault. Can be restricted to empty folders or used recursively.",
+  schema: deleteFolderSchema,
+  func: async ({ path, recursive }) => {
+    try {
+      const confirmed = await confirmFileOperation(
+        recursive
+          ? `Delete folder and all contents:\n${path}\n\nThis action cannot be undone.`
+          : `Delete folder (must be empty):\n${path}`,
+        "Delete Folder",
+        "Delete"
+      );
+      if (!confirmed) {
+        return {
+          ok: false,
+          message: "Delete folder operation cancelled by user.",
+        };
+      }
+
+      const folder = app.vault.getAbstractFileByPath(path);
+      if (!(folder instanceof TFolder)) {
+        return {
+          ok: false,
+          message: `Folder not found at path: ${path}.`,
+        };
+      }
+
+      if (!recursive && folder.children.length > 0) {
+        return {
+          ok: false,
+          message: `Folder is not empty: ${path}. Set recursive=true to delete with contents.`,
+        };
+      }
+
+      if (recursive) {
+        await deleteFolderRecursively(path);
+      } else {
+        await app.vault.delete(folder, true);
+      }
+
+      logInfo("[ComposerTools] deleteFolder succeeded", { path, recursive });
+      return {
+        ok: true,
+        message: `Folder deleted: ${path}`,
+      };
+    } catch (error) {
+      logError("[ComposerTools] deleteFolder failed", { path, recursive, error });
+      return {
+        ok: false,
+        message: formatFsError(error, "delete folder", path),
+      };
+    }
+  },
+});
+
+const moveFileSchema = z.object({
+  fromPath: z
+    .string()
+    .describe(
+      `(Required) The current path of the file to move (relative to the root of the vault).`
+    ),
+  toPath: z
+    .string()
+    .describe(
+      `(Required) The new path of the file (including the file name and extension, relative to the root of the vault).`
+    ),
+  createMissingFolders: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      `(Optional) When true, create any missing parent folders in the target path. Default: true.`
+    ),
+});
+
+const moveFileTool = createLangChainTool({
+  name: "moveFile",
+  description:
+    "Move or rename a single file within the vault. Uses Obsidian's file manager to safely update all links.",
+  schema: moveFileSchema,
+  func: async ({ fromPath, toPath, createMissingFolders = true }) => {
+    try {
+      const confirmed = await confirmFileOperation(
+        `Move or rename file:\n${fromPath}\n→\n${toPath}`,
+        "Move File",
+        "Move"
+      );
+      if (!confirmed) {
+        return {
+          ok: false,
+          message: "Move file operation cancelled by user.",
+        };
+      }
+
+      const file = app.vault.getAbstractFileByPath(fromPath);
+      if (!(file instanceof TFile)) {
+        return {
+          ok: false,
+          message: `Source file not found or not a note at path: ${fromPath}.`,
+        };
+      }
+
+      const existingTarget = app.vault.getAbstractFileByPath(toPath);
+      if (existingTarget) {
+        return {
+          ok: false,
+          message: `Target path already exists: ${toPath}. Choose a different path.`,
+        };
+      }
+
+      if (createMissingFolders && toPath.includes("/")) {
+        const folder = toPath.split("/").slice(0, -1).join("/");
+        if (folder) {
+          await ensureFolderExists(folder);
+        }
+      }
+
+      await app.fileManager.renameFile(file, toPath);
+      logInfo("[ComposerTools] moveFile succeeded", { fromPath, toPath, createMissingFolders });
+      return {
+        ok: true,
+        message: `File moved from ${fromPath} to ${toPath}`,
+      };
+    } catch (error) {
+      logError("[ComposerTools] moveFile failed", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+        error,
+      });
+      return {
+        ok: false,
+        message: formatFsError(error, "move file", `${fromPath}" -> "${toPath}`),
+      };
+    }
+  },
+});
+
+const moveFolderSchema = z.object({
+  fromPath: z
+    .string()
+    .describe(
+      `(Required) The current path of the folder to move (relative to the root of the vault).`
+    ),
+  toPath: z
+    .string()
+    .describe(`(Required) The new path of the folder (relative to the root of the vault).`),
+  createMissingFolders: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      `(Optional) When true, create any missing parent folders in the target path. Default: true.`
+    ),
+});
+
+const moveFolderTool = createLangChainTool({
+  name: "moveFolder",
+  description:
+    "Move or rename a folder (and its contents) within the vault. Uses Obsidian's file manager to safely update all links.",
+  schema: moveFolderSchema,
+  func: async ({ fromPath, toPath, createMissingFolders = true }) => {
+    try {
+      const confirmed = await confirmFileOperation(
+        `Move or rename folder (and all contents):\n${fromPath}\n→\n${toPath}`,
+        "Move Folder",
+        "Move"
+      );
+      if (!confirmed) {
+        return {
+          ok: false,
+          message: "Move folder operation cancelled by user.",
+        };
+      }
+
+      const folder = app.vault.getAbstractFileByPath(fromPath);
+      if (!(folder instanceof TFolder)) {
+        return {
+          ok: false,
+          message: `Source folder not found at path: ${fromPath}.`,
+        };
+      }
+
+      const existingTarget = app.vault.getAbstractFileByPath(toPath);
+      if (existingTarget) {
+        return {
+          ok: false,
+          message: `Target folder path already exists: ${toPath}. Choose a different path.`,
+        };
+      }
+
+      if (createMissingFolders && toPath.includes("/")) {
+        const parentFolder = toPath.split("/").slice(0, -1).join("/");
+        if (parentFolder) {
+          await ensureFolderExists(parentFolder);
+        }
+      }
+
+      await app.fileManager.renameFile(folder, toPath);
+      logInfo("[ComposerTools] moveFolder succeeded", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+      });
+      return {
+        ok: true,
+        message: `Folder moved from ${fromPath} to ${toPath}`,
+      };
+    } catch (error) {
+      logError("[ComposerTools] moveFolder failed", {
+        fromPath,
+        toPath,
+        createMissingFolders,
+        error,
+      });
+      return {
+        ok: false,
+        message: formatFsError(error, "move folder", `${fromPath}" -> "${toPath}`),
+      };
+    }
   },
 });
 
@@ -432,7 +861,13 @@ function parseSearchReplaceBlocks(
 export {
   writeToFileTool,
   replaceInFileTool,
+  deleteNoteTool,
+  createFolderTool,
+  deleteFolderTool,
+  moveFileTool,
+  moveFolderTool,
   parseSearchReplaceBlocks,
   normalizeLineEndings,
   replaceWithLineEndingAwareness,
+  formatFsError,
 };

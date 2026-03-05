@@ -937,6 +937,7 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   quickCommandModelKey: undefined,
   quickCommandIncludeNoteContext: true,
   autoIncludeTextSelection: false,
+  confirmFileOperations: true,
   autoAddSelectionToContext: false,
   autoAcceptEdits: false,
   diffViewMode: "split",

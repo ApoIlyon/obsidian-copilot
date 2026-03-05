@@ -157,13 +157,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
     });
   };
 
-  // Toggle states for vault, web search, composer, and autonomous agent
+  // Toggle states for vault, web search, composer, autonomous agent, and file confirmations
   const [vaultToggle, setVaultToggle] = useState(false);
   const [webToggle, setWebToggle] = useState(false);
   const [composerToggle, setComposerToggle] = useState(false);
   const [autonomousAgentToggle, setAutonomousAgentToggle] = useState(
     settings.enableAutonomousAgent
   );
+  const [fileOpsConfirmToggle, setFileOpsConfirmToggle] = useState(settings.confirmFileOperations);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const loadingMessages = [
     "Loading the project context...",
@@ -181,6 +182,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
       setAutonomousAgentToggle(settings.enableAutonomousAgent);
     }
   }, [settings.enableAutonomousAgent, currentChain]);
+
+  useEffect(() => {
+    setFileOpsConfirmToggle(settings.confirmFileOperations);
+  }, [settings.confirmFileOperations]);
 
   useEffect(() => {
     if (currentChain === ChainType.PROJECT_CHAIN) {
@@ -841,6 +846,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 setComposerToggle={setComposerToggle}
                 autonomousAgentToggle={autonomousAgentToggle}
                 setAutonomousAgentToggle={setAutonomousAgentToggle}
+                fileOpsConfirmToggle={fileOpsConfirmToggle}
+                setFileOpsConfirmToggle={setFileOpsConfirmToggle}
                 currentChain={currentChain}
                 onVaultToggleOff={handleVaultToggleOff}
                 onWebToggleOff={handleWebToggleOff}

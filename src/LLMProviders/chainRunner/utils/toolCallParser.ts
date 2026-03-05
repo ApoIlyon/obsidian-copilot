@@ -27,7 +27,9 @@ export interface ParsedMessage {
 }
 
 const TOOL_RESULT_UI_MAX_LENGTH = 5000;
-const TOOL_RESULT_OMITTED_THRESHOLD_MESSAGE = `Result omitted to keep the UI responsive (payload exceeded ${TOOL_RESULT_UI_MAX_LENGTH.toLocaleString()} characters).`;
+const TOOL_RESULT_OMITTED_THRESHOLD_MESSAGE = `Result omitted to keep the UI responsive (payload exceeded ${TOOL_RESULT_UI_MAX_LENGTH.toLocaleString(
+  "en-US"
+)} characters).`;
 
 /**
  * Safely encode tool result so it can be embedded inside an HTML comment

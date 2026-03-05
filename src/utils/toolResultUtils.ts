@@ -28,7 +28,7 @@ export function truncateToolResult(result: string, maxLength?: number): string {
   const truncated = result.substring(0, actualMaxLength);
   const remainingChars = result.length - actualMaxLength;
 
-  return `${truncated}\n\n... (truncated ${remainingChars.toLocaleString()} characters)`;
+  return `${truncated}\n\n... (truncated ${remainingChars.toLocaleString("en-US")} characters)`;
 }
 
 /**

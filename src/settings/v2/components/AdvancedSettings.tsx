@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { SettingItem } from "@/components/ui/setting-item";
 import { ObsidianNativeSelect } from "@/components/ui/obsidian-native-select";
+import { ConfigurationSharing } from "@/components/setup-uri/ConfigurationSharing";
 import { logFileManager } from "@/logFileManager";
 import { flushRecordedPromptPayloadToLog } from "@/LLMProviders/chainRunner/utils/promptPayloadRecorder";
 import { updateSetting, useSettingsValue } from "@/settings/model";
@@ -42,7 +43,7 @@ export const AdvancedSettings: React.FC = () => {
     <div className="tw-space-y-4">
       {/* User System Prompt Section */}
       <section className="tw-space-y-4 tw-rounded-lg tw-border tw-p-4">
-        <h3 className="tw-text-lg tw-font-semibold">User System Prompt</h3>
+        <div className="tw-text-xl tw-font-bold">User System Prompt</div>
 
         <SettingItem
           type="custom"
@@ -91,9 +92,12 @@ export const AdvancedSettings: React.FC = () => {
         />
       </section>
 
+      {/* Configuration Sharing Section */}
+      <ConfigurationSharing />
+
       {/* Others Section */}
       <section className="tw-space-y-4 tw-rounded-lg tw-border tw-p-4">
-        <h3 className="tw-text-lg tw-font-semibold">Others</h3>
+        <div className="tw-text-xl tw-font-bold">Others</div>
 
         <SettingItem
           type="switch"

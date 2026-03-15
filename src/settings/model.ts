@@ -199,6 +199,8 @@ export interface CopilotSettings {
   autoCompactThreshold: number;
   /** Folder where converted document markdown files are saved */
   convertedDocOutputFolder: string;
+  /** Whether secrets have been migrated from data.json to OS Keychain (SecretStorage). */
+  _keychainMigrated?: boolean;
 }
 
 export const settingsStore = createStore();

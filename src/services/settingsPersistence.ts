@@ -1,7 +1,7 @@
 import { type CopilotSettings, sanitizeSettings } from "@/settings/model";
-import { encryptAllKeys } from "@/encryptionService";
+import { encryptAllKeys, isEncryptedValue, getDecryptedKey, isSensitiveKey } from "@/encryptionService";
 import { KeychainService } from "@/services/keychainService";
-import { logError, logInfo } from "@/logger";
+import { logError, logInfo, logWarn } from "@/logger";
 
 /**
  * Write queue to serialize all persistence operations.
@@ -87,10 +87,11 @@ export async function loadSettingsWithKeychain(
     const result = await keychain.migrateFromLegacy(settings);
     if (result.migrated) {
       try {
-        // Reason: encrypt before writing to data.json to maintain the portable
-        // fallback invariant. Source settings may be plaintext (legacy failure case),
-        // so we must not persist them unencrypted even during migration writeback.
-        const encrypted = await encryptAllKeys(result.settings);
+        // Reason: hydrate from keychain first so the portable fallback in data.json
+        // reflects the verified keychain values, not the stale source settings.
+        // On migration retry, keychain may have newer values than result.settings.
+        const hydrated = await keychain.hydrateSecrets(result.settings);
+        const encrypted = await encryptAllKeys(hydrated);
         await saveData({ ...encrypted, _keychainMigrated: true });
       } catch (error) {
         // Reason: Migration wrote secrets to keychain successfully, but failed to
@@ -107,7 +108,53 @@ export async function loadSettingsWithKeychain(
   // Hydrate secrets from keychain into memory
   settings = await keychain.hydrateSecrets(settings);
 
+  // Reason: `_keychainMigrated` may have been synced from another device whose
+  // safeStorage encrypted the data.json fallback values. If any secret is still
+  // encrypted after hydration (meaning local keychain didn't have it), the flag
+  // is invalid on this device. Clear it so saves use the legacy path until this
+  // device's own migration succeeds.
+  if (settings._keychainMigrated && hasEncryptedSecrets(settings)) {
+    logWarn(
+      "Settings load: _keychainMigrated flag appears synced from another device. " +
+        "Clearing flag to trigger local migration on next startup."
+    );
+    settings = { ...settings, _keychainMigrated: false } as CopilotSettings;
+  }
+
   return settings;
+}
+
+/**
+ * Check whether any sensitive field (top-level or model-level) still holds
+ * an encrypted value after hydration. Used to detect synced `_keychainMigrated`
+ * flags from another device where the local keychain didn't have the plaintext.
+ */
+function hasEncryptedSecrets(settings: CopilotSettings): boolean {
+  // Check top-level sensitive fields
+  for (const key of Object.keys(settings)) {
+    if (!isSensitiveKey(key)) continue;
+    const value = (settings as unknown as Record<string, unknown>)[key];
+    if (typeof value === "string" && isEncryptedValue(value)) {
+      return true;
+    }
+  }
+
+  // Check model-level secret fields (apiKey, openAIOrgId)
+  const modelLists = [settings.activeModels, settings.activeEmbeddingModels];
+  for (const models of modelLists) {
+    if (!models?.length) continue;
+    for (const model of models) {
+      const record = model as unknown as Record<string, unknown>;
+      for (const field of ["apiKey", "openAIOrgId"]) {
+        const value = record[field];
+        if (typeof value === "string" && isEncryptedValue(value)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -130,8 +177,10 @@ async function doPersist(
 
   // Reason: respect the user's `enableEncryption` toggle. When off, secrets stay
   // in data.json as plaintext — useful for users who need to sync/edit settings manually.
-  // Keychain is only used when the user explicitly opts into encryption.
-  if (!settings.enableEncryption || !keychain.isAvailable()) {
+  // Keychain is only used when encryption is on, keychain is available, AND migration
+  // has completed. Without the migration gate, a synced vault with enc_desk_ secrets
+  // from another desktop would hit the decrypt-guard and fail every save.
+  if (!settings.enableEncryption || !keychain.isAvailable() || !settings._keychainMigrated) {
     return doLegacyPersist(settings, saveData);
   }
 
@@ -144,17 +193,24 @@ async function doPersist(
   // Reason: If keychain write fails, we throw before touching data.json,
   // so data.json retains its old values and nothing is lost.
   for (const [id, value] of secretEntries) {
-    await keychain.setSecretById(id, value);
+    // Reason: after a keychain reset, memory may hold encrypted data.json values.
+    // Writing ciphertext to keychain would poison it permanently. Decrypt first;
+    // if decryption fails, abort persistence to avoid silent data corruption.
+    let plaintext = value;
+    if (isEncryptedValue(value)) {
+      plaintext = await getDecryptedKey(value);
+      if (!plaintext) {
+        throw new Error(`Cannot persist: failed to decrypt secret for keychain entry "${id}".`);
+      }
+    }
+    await keychain.setSecretById(id, plaintext);
   }
 
-  // Clean up deleted model entries
+  // Clean up deleted model entries (write tombstone "")
+  // Reason: if tombstone write fails, hydration would resurrect the deleted secret
+  // on next startup. Treat failures the same as normal keychain writes — abort persist.
   for (const id of keychainIdsToDelete) {
-    try {
-      await keychain.setSecretById(id, "");
-    } catch (error) {
-      // Reason: Cleanup failure is non-critical — orphaned entries don't cause issues.
-      logError(`Failed to clean up keychain entry ${id}:`, error);
-    }
+    await keychain.setSecretById(id, "");
   }
 
   // Step 2: Write encrypted settings to data.json as a portable fallback.

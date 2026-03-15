@@ -36,7 +36,6 @@ import { WebSelectionTracker } from "@/services/webViewerService/webViewerServic
 import VectorStoreManager from "@/search/vectorStoreManager";
 import { CopilotSettingTab } from "@/settings/SettingsPage";
 import {
-  type CopilotSettings,
   getModelKeyFromModel,
   getSettings,
   setSettings,
@@ -93,19 +92,12 @@ export default class CopilotPlugin extends Plugin {
   private lastSelectionSignature?: string;
   private webSelectionTracker?: WebSelectionTracker;
   private readonly chatHistoryLastAccessedAtManager = new RecentUsageManager<string>();
-  // Reason: track the last successfully persisted settings for diagnostic purposes.
-  private lastPersistedSettings: CopilotSettings | null = null;
-
   async onload(): Promise<void> {
     KeychainService.getInstance(this.app);
     await this.loadSettings();
-    this.lastPersistedSettings = getSettings();
     this.settingsUnsubscriber = subscribeToSettingsChange(async (prev, next) => {
       try {
         await persistSettings(next, (data) => this.saveData(data), prev);
-        // Reason: only update after successful persistence so we know
-        // what's actually on disk for diagnostic purposes.
-        this.lastPersistedSettings = next;
       } catch (error) {
         // Reason: Do NOT rollback memory state on persist failure.
         // The writeQueue serializes I/O, so a later setSettings() may already

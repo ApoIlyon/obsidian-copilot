@@ -345,7 +345,7 @@ describe("validateSetupUri", () => {
   it("should throw SetupUriDecryptionError for a wrong password", async () => {
     const { SetupUriDecryptionError } = jest.requireMock("@/setupUri/crypto");
     (decryptWithPassphrase as jest.Mock).mockRejectedValue(
-      new SetupUriDecryptionError("bad_password", "Wrong password.")
+      new SetupUriDecryptionError("wrong_passphrase", "Wrong password.")
     );
 
     await expect(validateSetupUri("X", "wrong")).rejects.toThrow("Wrong password.");

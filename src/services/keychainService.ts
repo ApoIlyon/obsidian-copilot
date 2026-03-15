@@ -74,10 +74,8 @@ export interface MigrationResult {
   migrated: boolean;
 }
 
-/** Output of `extractSecrets()` — what to write to keychain and what to save to data.json. */
+/** Output of `persistSecrets()` — what to write to keychain and what to clean up. */
 export interface PersistSecretsResult {
-  /** Settings with all secret fields set to `""`. */
-  stripped: CopilotSettings;
   /** Entries to write to keychain: `[keychainId, value]` pairs. */
   secretEntries: Array<[string, string]>;
   /** Keychain IDs of deleted models to clear. */
@@ -188,9 +186,11 @@ export class KeychainService {
     for (const key of Object.keys(hydrated)) {
       if (!isSecretKey(key)) continue;
       const value = await this.getSecret(key);
-      if (value && value.length > 0) {
-        (hydrated as unknown as Record<string, unknown>)[key] = value;
-      }
+      // Reason: `null` means "not in keychain" → keep the disk value (backward compat).
+      // `""` means "explicitly deleted" (tombstone) → override disk value to prevent
+      // a stale data.json secret from resurrecting after a failed saveData().
+      if (value === null) continue;
+      (hydrated as unknown as Record<string, unknown>)[key] = value;
     }
 
     // Hydrate model-level secrets
@@ -205,21 +205,21 @@ export class KeychainService {
 
   /**
    * Extract secrets from settings for keychain persistence.
-   * Returns stripped settings (secrets set to `""`) plus entries to write to keychain,
-   * entries to clear from keychain, and deleted model keys to clean up.
+   * Returns entries to write to keychain and IDs to clean up.
+   * Does NOT modify the settings object — data.json is written separately
+   * by the caller using `encryptAllKeys()` for portable fallback.
    */
   persistSecrets(
     settings: CopilotSettings,
     prevSettings?: CopilotSettings
   ): PersistSecretsResult {
-    const stripped = { ...settings };
     const secretEntries: Array<[string, string]> = [];
     const clearedSecretIds: string[] = [];
 
-    // Extract top-level secrets
-    for (const key of Object.keys(stripped)) {
+    // Collect top-level secrets
+    for (const key of Object.keys(settings)) {
       if (!isSecretKey(key)) continue;
-      const value = (stripped as unknown as Record<string, unknown>)[key];
+      const value = (settings as unknown as Record<string, unknown>)[key];
       const id = toKeychainId(key);
 
       if (typeof value === "string" && value.length > 0) {
@@ -233,24 +233,13 @@ export class KeychainService {
           clearedSecretIds.push(id);
         }
       }
-      (stripped as unknown as Record<string, unknown>)[key] = "";
     }
 
-    // Extract model-level secrets
-    stripped.activeModels = this.stripModelSecrets(
-      "chat",
-      settings.activeModels,
-      secretEntries,
-      prevSettings?.activeModels,
-      clearedSecretIds
-    );
-    stripped.activeEmbeddingModels = this.stripModelSecrets(
-      "embedding",
-      settings.activeEmbeddingModels,
-      secretEntries,
-      prevSettings?.activeEmbeddingModels,
-      clearedSecretIds
-    );
+    // Collect model-level secrets
+    this.collectModelSecrets("chat", settings.activeModels, secretEntries,
+      prevSettings?.activeModels, clearedSecretIds);
+    this.collectModelSecrets("embedding", settings.activeEmbeddingModels, secretEntries,
+      prevSettings?.activeEmbeddingModels, clearedSecretIds);
 
     // Find deleted models to clean up their keychain entries (per scope)
     const keychainIdsToDelete = [
@@ -267,7 +256,7 @@ export class KeychainService {
       ...clearedSecretIds,
     ];
 
-    return { stripped, secretEntries, keychainIdsToDelete };
+    return { secretEntries, keychainIdsToDelete };
   }
 
   /**
@@ -297,8 +286,8 @@ export class KeychainService {
           // Reason: raw is non-empty but decryption returned empty — this means
           // the value exists but can't be decrypted on this device (e.g. different
           // machine's Electron safeStorage key). Abort entire migration to avoid
-          // data loss: stripAllSecrets() would erase the encrypted value from
-          // data.json while keychain has nothing.
+          // data loss: the encrypted value would remain only in data.json with no
+          // keychain backup, leading to inconsistent state.
           logWarn(
             `Keychain migration: failed to decrypt "${key}" — aborting migration. ` +
               "Will retry on next startup."
@@ -369,14 +358,16 @@ export class KeychainService {
         }
       }
 
-      // All verified — clean settings
-      const cleaned = this.stripAllSecrets(settings);
-      cleaned._keychainMigrated = true;
+      // All verified — mark as migrated but keep existing values in settings.
+      // Reason: data.json retains encrypted/plaintext secrets as a portable fallback
+      // for non-keychain platforms (mobile, older Obsidian). The caller will re-encrypt
+      // before writing to data.json. Desktop with keychain overrides these via hydration.
+      const migrated = { ...settings, _keychainMigrated: true } as CopilotSettings;
 
       logInfo(
         `Keychain migration: successfully migrated ${written.length} secrets to OS keychain`
       );
-      return { settings: cleaned, migrated: true };
+      return { settings: migrated, migrated: true };
     } catch (error) {
       logError("Keychain migration failed — will retry on next startup:", error);
       return { settings, migrated: false };
@@ -396,9 +387,10 @@ export class KeychainService {
 
       for (const field of MODEL_SECRET_FIELDS) {
         const value = await this.getModelSecret(scope, identity, field);
-        if (value && value.length > 0) {
-          (copy as unknown as Record<string, unknown>)[field] = value;
-        }
+        // Reason: same tombstone logic as top-level hydration —
+        // `null` = not in keychain (keep disk), `""` = explicitly deleted.
+        if (value === null) continue;
+        (copy as unknown as Record<string, unknown>)[field] = value;
       }
 
       hydrated.push(copy);
@@ -406,15 +398,15 @@ export class KeychainService {
     return hydrated;
   }
 
-  /** Strip model-level secrets, collecting entries for keychain write and cleared IDs. */
-  private stripModelSecrets(
+  /** Collect model-level secret entries and cleared IDs without modifying models. */
+  private collectModelSecrets(
     scope: ModelScope,
     models: CustomModel[],
     secretEntries: Array<[string, string]>,
     prevModels?: CustomModel[],
     clearedSecretIds?: string[]
-  ): CustomModel[] {
-    if (!models?.length) return models;
+  ): void {
+    if (!models?.length) return;
 
     // Build a lookup of previous model secrets for detecting cleared fields
     const prevModelMap = new Map<string, CustomModel>();
@@ -424,13 +416,12 @@ export class KeychainService {
       }
     }
 
-    return models.map((model) => {
-      const copy = { ...model };
+    for (const model of models) {
       const identity = getModelKeyFromModel(model);
       const prevModel = prevModelMap.get(identity);
 
       for (const field of MODEL_SECRET_FIELDS) {
-        const value = copy[field];
+        const value = model[field];
         const id = toModelKeychainId(scope, identity, field);
 
         if (typeof value === "string" && value.length > 0) {
@@ -444,11 +435,8 @@ export class KeychainService {
             clearedSecretIds.push(id);
           }
         }
-        (copy as unknown as Record<string, unknown>)[field] = "";
       }
-
-      return copy;
-    });
+    }
   }
 
   /** Find keychain IDs for models deleted from a specific scope (chat or embedding). */
@@ -469,33 +457,4 @@ export class KeychainService {
       });
   }
 
-  /** Strip all secret fields from settings (for migration cleanup). */
-  private stripAllSecrets(settings: CopilotSettings): CopilotSettings {
-    const cleaned = { ...settings };
-
-    // Strip top-level secrets
-    for (const key of Object.keys(cleaned)) {
-      if (isSecretKey(key)) {
-        (cleaned as unknown as Record<string, unknown>)[key] = "";
-      }
-    }
-
-    // Strip model-level secrets
-    cleaned.activeModels = (cleaned.activeModels ?? []).map((m) => {
-      const copy = { ...m };
-      for (const field of MODEL_SECRET_FIELDS) {
-        (copy as unknown as Record<string, unknown>)[field] = "";
-      }
-      return copy;
-    });
-    cleaned.activeEmbeddingModels = (cleaned.activeEmbeddingModels ?? []).map((m) => {
-      const copy = { ...m };
-      for (const field of MODEL_SECRET_FIELDS) {
-        (copy as unknown as Record<string, unknown>)[field] = "";
-      }
-      return copy;
-    });
-
-    return cleaned;
-  }
 }

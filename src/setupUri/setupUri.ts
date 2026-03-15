@@ -157,18 +157,22 @@ export async function generateSetupUri(
 // ---------------------------------------------------------------------------
 
 /**
- * Decrypt and validate a Setup URI payload without applying any settings.
+ * Decrypt, parse, and validate a Setup URI payload into a typed envelope.
  *
- * Performs the full decryption → parse → envelope validation → version check
- * pipeline, then discards the result. Use this to verify the password is
- * correct before committing to the destructive import step.
+ * Shared pipeline used by both `validateSetupUri()` and `applySetupUri()`
+ * to avoid duplicating the decrypt → JSON parse → envelope validate →
+ * version check sequence.
  *
  * @param payload The base64url-encoded encrypted payload.
  * @param passphrase The password used to encrypt the payload.
+ * @returns The validated envelope containing metadata and settings.
  * @throws {SetupUriDecryptionError} If the password is wrong.
  * @throws {Error} If the payload is malformed or the version is unsupported.
  */
-export async function validateSetupUri(payload: string, passphrase: string): Promise<void> {
+async function decryptAndParseEnvelope(
+  payload: string,
+  passphrase: string
+): Promise<SetupUriEnvelope> {
   const json = await decryptWithPassphrase(payload, passphrase);
 
   let parsed: unknown;
@@ -186,8 +190,24 @@ export async function validateSetupUri(payload: string, passphrase: string): Pro
     );
   }
 
+  return envelope;
+}
+
+/**
+ * Decrypt and validate a Setup URI payload without applying any settings.
+ *
+ * Use this to verify the password is correct before committing to the
+ * destructive import step.
+ *
+ * @param payload The base64url-encoded encrypted payload.
+ * @param passphrase The password used to encrypt the payload.
+ * @throws {SetupUriDecryptionError} If the password is wrong.
+ * @throws {Error} If the payload is malformed or the version is unsupported.
+ */
+export async function validateSetupUri(payload: string, passphrase: string): Promise<void> {
   // Reason: discard the result intentionally — this function only validates
   // that the payload can be decrypted and parsed, without side effects.
+  await decryptAndParseEnvelope(payload, passphrase);
 }
 
 /**
@@ -248,25 +268,7 @@ export async function applySetupUri(
   payload: string,
   passphrase: string
 ): Promise<{ settings: CopilotSettings; meta: SetupUriMeta }> {
-  const json = await decryptWithPassphrase(payload, passphrase);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new Error("Failed to parse the decrypted settings as JSON.");
-  }
-
-  // Parse and validate the envelope structure
-  const envelope = parseEnvelope(parsed);
-
-  // Validate schema version before applying
-  if (envelope.meta.version !== SETUP_URI_VERSION) {
-    throw new Error(
-      `Unsupported settings version (${envelope.meta.version}). Please update the Copilot plugin.`
-    );
-  }
-
+  const envelope = await decryptAndParseEnvelope(payload, passphrase);
   const settings = toSafeRecord(envelope.settings);
 
   // Reason: migration state is vault/device-local and must be recomputed

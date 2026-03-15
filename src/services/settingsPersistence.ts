@@ -17,9 +17,9 @@ let writeQueue: Promise<void> = Promise.resolve();
  * Used by both the settings subscriber and Setup URI import.
  *
  * When keychain is available:
- * 1. Extract secrets from settings → get stripped settings + secret entries
+ * 1. Extract secrets from settings → get secret entries for keychain
  * 2. Write secrets to keychain FIRST (never clear data.json before keychain confirmed)
- * 3. Write stripped settings to data.json (with `_keychainMigrated: true`)
+ * 3. Write encrypted settings to data.json as portable fallback (with `_keychainMigrated: true`)
  *
  * When keychain is NOT available:
  * - Falls back to legacy encryption or plain save based on `enableEncryption`.
@@ -72,13 +72,26 @@ export async function loadSettingsWithKeychain(
     return settings;
   }
 
+  // Reason: when encryption is off, skip both migration and hydration entirely.
+  // If the user turned off encryption after a prior migration, secrets already
+  // exist in data.json as plaintext (written by doLegacyPersist). Hydrating stale
+  // keychain values would overwrite those plaintext values — effectively ignoring
+  // the user's choice to disable encryption.
+  if (!settings.enableEncryption) {
+    return settings;
+  }
+
   // One-time migration from legacy encryption to keychain
   if (!settings._keychainMigrated) {
     logInfo("Settings load: keychain available, checking for legacy secrets to migrate");
     const result = await keychain.migrateFromLegacy(settings);
     if (result.migrated) {
       try {
-        await saveData(result.settings);
+        // Reason: encrypt before writing to data.json to maintain the portable
+        // fallback invariant. Source settings may be plaintext (legacy failure case),
+        // so we must not persist them unencrypted even during migration writeback.
+        const encrypted = await encryptAllKeys(result.settings);
+        await saveData({ ...encrypted, _keychainMigrated: true });
       } catch (error) {
         // Reason: Migration wrote secrets to keychain successfully, but failed to
         // persist the cleaned data.json with _keychainMigrated flag. This is non-fatal:
@@ -115,11 +128,14 @@ async function doPersist(
 ): Promise<void> {
   const keychain = KeychainService.getInstance();
 
-  if (!keychain.isAvailable()) {
+  // Reason: respect the user's `enableEncryption` toggle. When off, secrets stay
+  // in data.json as plaintext — useful for users who need to sync/edit settings manually.
+  // Keychain is only used when the user explicitly opts into encryption.
+  if (!settings.enableEncryption || !keychain.isAvailable()) {
     return doLegacyPersist(settings, saveData);
   }
 
-  const { stripped, secretEntries, keychainIdsToDelete } = keychain.persistSecrets(
+  const { secretEntries, keychainIdsToDelete } = keychain.persistSecrets(
     settings,
     prevSettings
   );
@@ -141,16 +157,17 @@ async function doPersist(
     }
   }
 
-  // Step 2: Write stripped settings to data.json
-  // Reason: If saveData fails, keychain already has the latest secrets and memory
-  // retains the current state. Next successful persist will reconcile data.json.
-  // We do NOT roll back keychain — that would create a split where memory has new
-  // values but keychain has old values, which is worse than the forward-only approach.
-  const dataToSave: CopilotSettings = { ...stripped, _keychainMigrated: true };
+  // Step 2: Write encrypted settings to data.json as a portable fallback.
+  // Reason: data.json syncs across devices. Non-keychain platforms (mobile, older
+  // Obsidian) cannot access SecretStorage, so they need encrypted copies to decrypt
+  // locally. Desktop with keychain ignores these — hydrateSecrets() overwrites them
+  // with plaintext from keychain at startup.
+  const encrypted = await encryptAllKeys(settings);
+  const dataToSave: CopilotSettings = { ...encrypted, _keychainMigrated: true };
   await saveData(dataToSave);
 }
 
-/** Legacy persistence path when keychain is not available. */
+/** Legacy persistence path when keychain is not available or encryption is off. */
 async function doLegacyPersist(
   settings: CopilotSettings,
   saveData: (data: CopilotSettings) => Promise<void>
@@ -158,6 +175,12 @@ async function doLegacyPersist(
   if (settings.enableEncryption) {
     await saveData(await encryptAllKeys(settings));
   } else {
-    await saveData(settings);
+    // Reason: clear _keychainMigrated so next startup doesn't attempt to hydrate
+    // stale keychain entries over the plaintext values the user chose to keep.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { _keychainMigrated, ...rest } = settings as CopilotSettings & {
+      _keychainMigrated?: boolean;
+    };
+    await saveData(rest as CopilotSettings);
   }
 }

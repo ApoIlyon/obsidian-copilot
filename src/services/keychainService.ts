@@ -262,20 +262,19 @@ export class KeychainService {
   /**
    * One-time migration from legacy encryption (data.json) to OS keychain.
    *
-   * Steps:
-   * 1. Decrypt all top-level secrets and model secrets via `getDecryptedKey()`
-   * 2. Write plaintext values to keychain (skip if keychain already has a non-empty value)
-   * 3. Read back all values to verify
-   * 4. If all verified → return cleaned settings with `_keychainMigrated: true`
-   * 5. If any verification fails → return original settings unchanged
+   * Two-phase approach to prevent partial writes:
+   * Phase 1: Decrypt all secrets into memory. If ANY fails, abort without touching keychain.
+   * Phase 2: Write all decrypted values to keychain (back-fill only), then verify.
    */
   async migrateFromLegacy(settings: CopilotSettings): Promise<MigrationResult> {
     logInfo("Keychain migration: starting legacy → keychain migration");
 
-    const written: Array<[string, string]> = [];
-
     try {
-      // Migrate top-level secrets
+      // ── Phase 1: Decrypt all secrets into memory ──────────────────
+      // Reason: decrypting everything BEFORE writing prevents partial keychain
+      // state that could lock in stale values on retry.
+      const pending: Array<[string, string]> = [];
+
       for (const key of Object.keys(settings)) {
         if (!isSecretKey(key)) continue;
         const raw = (settings as unknown as Record<string, unknown>)[key];
@@ -283,34 +282,15 @@ export class KeychainService {
 
         const plaintext = await getDecryptedKey(raw);
         if (!plaintext || plaintext.length === 0) {
-          // Reason: raw is non-empty but decryption returned empty — this means
-          // the value exists but can't be decrypted on this device (e.g. different
-          // machine's Electron safeStorage key). Abort entire migration to avoid
-          // data loss: the encrypted value would remain only in data.json with no
-          // keychain backup, leading to inconsistent state.
           logWarn(
             `Keychain migration: failed to decrypt "${key}" — aborting migration. ` +
               "Will retry on next startup."
           );
           return { settings, migrated: false };
         }
-
-        const id = toKeychainId(key);
-
-        // Reason: If this is a migration retry (previous saveData failed but keychain
-        // was partially written), the keychain may already have a newer value that the
-        // user set after the first migration attempt. Only back-fill missing entries;
-        // never overwrite an existing non-empty keychain value with a stale data.json value.
-        const existing = await this.storage.getSecret(id);
-        if (!existing || existing.length === 0) {
-          await this.storage.setSecret(id, plaintext);
-          written.push([id, plaintext]);
-        } else {
-          written.push([id, existing]);
-        }
+        pending.push([toKeychainId(key), plaintext]);
       }
 
-      // Migrate model-level secrets (per scope to avoid cross-list collisions)
       const modelGroups: Array<[ModelScope, CustomModel[]]> = [
         ["chat", settings.activeModels ?? []],
         ["embedding", settings.activeEmbeddingModels ?? []],
@@ -324,29 +304,33 @@ export class KeychainService {
 
             const plaintext = await getDecryptedKey(raw);
             if (!plaintext || plaintext.length === 0) {
-              // Reason: Same as above — non-empty raw but decryption failed.
               logWarn(
                 `Keychain migration: failed to decrypt model secret ` +
                   `"${field}" for "${identity}" — aborting migration.`
               );
               return { settings, migrated: false };
             }
-
-            const id = toModelKeychainId(scope, identity, field);
-
-            // Reason: Same back-fill-only logic as top-level secrets.
-            const existing = await this.storage.getSecret(id);
-            if (!existing || existing.length === 0) {
-              await this.storage.setSecret(id, plaintext);
-              written.push([id, plaintext]);
-            } else {
-              written.push([id, existing]);
-            }
+            pending.push([toModelKeychainId(scope, identity, field), plaintext]);
           }
         }
       }
 
-      // Verify all written values by reading back
+      // ── Phase 2: Write to keychain (back-fill only) + verify ─────
+      const written: Array<[string, string]> = [];
+      for (const [id, plaintext] of pending) {
+        // Reason: only back-fill missing entries. If keychain already has a non-empty
+        // value (from a prior partial retry), keep the existing one to avoid overwriting
+        // a newer value the user may have saved via the normal persist path.
+        const existing = await this.storage.getSecret(id);
+        if (!existing || existing.length === 0) {
+          await this.storage.setSecret(id, plaintext);
+          written.push([id, plaintext]);
+        } else {
+          written.push([id, existing]);
+        }
+      }
+
+      // Verify all values by reading back
       for (const [id, expected] of written) {
         const actual = await this.storage.getSecret(id);
         if (actual !== expected) {

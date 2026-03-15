@@ -119,6 +119,15 @@ export async function loadSettingsWithKeychain(
         "Clearing flag to trigger local migration on next startup."
     );
     settings = { ...settings, _keychainMigrated: false } as CopilotSettings;
+    // Reason: persist the cleared flag to data.json so the next startup
+    // actually re-runs migration instead of re-detecting the stale flag.
+    try {
+      const encrypted = await encryptAllKeys(settings);
+      await saveData(encrypted);
+    } catch {
+      // Non-fatal: worst case is re-detection on next startup.
+      logWarn("Failed to persist cleared _keychainMigrated flag.");
+    }
   }
 
   return settings;

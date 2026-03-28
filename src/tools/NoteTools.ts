@@ -1,9 +1,12 @@
 import { TFile } from "obsidian";
 import { z } from "zod";
+import { TEXT_READABLE_EXTENSIONS } from "@/constants";
 import { logInfo, logWarn } from "@/logger";
 import { createLangChainTool } from "./createLangChainTool";
 
 const LINES_PER_CHUNK = 200;
+const READABLE_NOTE_EXTENSION_LIST = TEXT_READABLE_EXTENSIONS.map((extension) => `.${extension}`);
+const READABLE_NOTE_EXTENSIONS = new Set(TEXT_READABLE_EXTENSIONS);
 
 interface LinkedNoteCandidate {
   path: string;
@@ -24,6 +27,13 @@ interface NoteChunk {
   chunkIndex: number;
   content: string;
   heading: string;
+}
+
+interface CanvasFileSummary {
+  nodeCount: number;
+  edgeCount: number;
+  invalidEdgeCount: number;
+  nodeTypeCounts: Record<string, number>;
 }
 
 type ResolveNoteSuccess = {
@@ -98,6 +108,26 @@ function pathHasExtension(value: string): boolean {
   return /\.[^/]+$/.test(value);
 }
 
+/**
+ * Determine whether a vault file can be read directly as text by readNote.
+ *
+ * @param file - Vault file to inspect.
+ * @returns True when the file extension is registered as text-readable.
+ */
+function isReadableTextNoteFile(file: TFile): boolean {
+  return READABLE_NOTE_EXTENSIONS.has(file.extension.toLowerCase());
+}
+
+/**
+ * Return all vault files that can be consumed by readNote as plain text.
+ *
+ * @returns Array of vault files with text-readable extensions.
+ */
+function getReadableTextFiles(): TFile[] {
+  const files = app.vault.getFiles?.() ?? [];
+  return files.filter((file) => isReadableTextNoteFile(file));
+}
+
 async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
   const tryResolve = (path: string) => {
     const maybeFile = app.vault.getAbstractFileByPath(path);
@@ -125,7 +155,7 @@ async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
     }
 
     if (!pathHasExtension(candidate)) {
-      for (const ext of [".md", ".canvas"]) {
+      for (const ext of READABLE_NOTE_EXTENSION_LIST) {
         const resolved = tryResolve(`${candidate}${ext}`);
         if (resolved) {
           return { type: "resolved", file: resolved };
@@ -141,7 +171,7 @@ async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
     const linkTargets = new Set<string>([resolutionTarget]);
 
     if (!pathHasExtension(resolutionTarget)) {
-      for (const ext of [".md", ".canvas"]) {
+      for (const ext of READABLE_NOTE_EXTENSION_LIST) {
         linkTargets.add(`${resolutionTarget}${ext}`);
       }
     }
@@ -158,8 +188,8 @@ async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
     return { type: "not_found" };
   }
 
-  const markdownFiles = app.vault.getMarkdownFiles?.() ?? [];
-  if (markdownFiles.length === 0) {
+  const readableFiles = getReadableTextFiles();
+  if (readableFiles.length === 0) {
     return { type: "not_found" };
   }
 
@@ -167,12 +197,12 @@ async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
   const candidatePathForms = new Set<string>([normalizedTarget]);
 
   if (!pathHasExtension(resolutionTarget)) {
-    for (const ext of [".md", ".canvas"]) {
+    for (const ext of READABLE_NOTE_EXTENSION_LIST) {
       candidatePathForms.add(normalizePathFragment(`${resolutionTarget}${ext}`));
     }
   }
 
-  for (const file of markdownFiles) {
+  for (const file of readableFiles) {
     const normalizedFilePath = normalizePathFragment(file.path);
     if (candidatePathForms.has(normalizedFilePath)) {
       return { type: "resolved", file };
@@ -182,7 +212,7 @@ async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
   const basename = resolutionTarget.split("/").pop();
   if (basename) {
     const normalizedBasename = basename.toLowerCase();
-    const basenameMatches = markdownFiles.filter(
+    const basenameMatches = readableFiles.filter(
       (file) => file.basename.toLowerCase() === normalizedBasename
     );
 
@@ -200,7 +230,7 @@ async function resolveNoteFile(notePath: string): Promise<ResolveNoteOutcome> {
     return { type: "not_found" };
   }
 
-  const partialMatches = markdownFiles.filter((file) =>
+  const partialMatches = readableFiles.filter((file) =>
     pathSegmentsMatchTail(file.path, targetSegments)
   );
 
@@ -226,7 +256,7 @@ async function readNoteText(file: TFile): Promise<string> {
 
 function buildBasenameIndex(): Map<string, TFile[]> {
   const index = new Map<string, TFile[]>();
-  const files = app.vault.getMarkdownFiles?.() ?? [];
+  const files = getReadableTextFiles();
 
   for (const file of files) {
     if (file instanceof TFile) {
@@ -357,12 +387,84 @@ function chunkContentByLines(file: TFile, content: string): NoteChunk[] {
   return chunks;
 }
 
+/**
+ * Parse canvas JSON and return structural statistics for agent-side reasoning.
+ *
+ * @param content - Raw canvas file content.
+ * @returns Summary object when JSON is valid; otherwise undefined.
+ */
+function buildCanvasFileSummary(content: string): CanvasFileSummary | undefined {
+  try {
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== "object") {
+      return undefined;
+    }
+
+    const nodes = Array.isArray((parsed as { nodes?: unknown[] }).nodes)
+      ? ((parsed as { nodes: unknown[] }).nodes as Array<Record<string, unknown>>)
+      : [];
+    const edges = Array.isArray((parsed as { edges?: unknown[] }).edges)
+      ? ((parsed as { edges: unknown[] }).edges as Array<Record<string, unknown>>)
+      : [];
+
+    const nodeIds = new Set<string>();
+    const nodeTypeCounts: Record<string, number> = {};
+
+    for (const node of nodes) {
+      const nodeId = typeof node.id === "string" ? node.id : "";
+      if (nodeId) {
+        nodeIds.add(nodeId);
+      }
+
+      const nodeType = typeof node.type === "string" ? node.type : "unknown";
+      nodeTypeCounts[nodeType] = (nodeTypeCounts[nodeType] ?? 0) + 1;
+    }
+
+    let invalidEdgeCount = 0;
+    for (const edge of edges) {
+      const fromNode = typeof edge.fromNode === "string" ? edge.fromNode : "";
+      const toNode = typeof edge.toNode === "string" ? edge.toNode : "";
+      if (!fromNode || !toNode || !nodeIds.has(fromNode) || !nodeIds.has(toNode)) {
+        invalidEdgeCount += 1;
+      }
+    }
+
+    return {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      invalidEdgeCount,
+      nodeTypeCounts,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Prepare file content for readNote chunking and attach optional canvas metadata.
+ *
+ * @param file - File being read.
+ * @param content - Raw vault content.
+ * @returns Read content plus optional canvas summary metadata.
+ */
+function prepareNoteContentForRead(
+  file: TFile,
+  content: string
+): { normalizedContent: string; canvasSummary?: CanvasFileSummary } {
+  if (file.extension.toLowerCase() !== "canvas") {
+    return { normalizedContent: content };
+  }
+
+  const canvasSummary = buildCanvasFileSummary(content);
+  return { normalizedContent: content, canvasSummary };
+}
+
 const readNoteSchema = z.object({
   notePath: z
     .string()
     .min(1)
     .describe(
-      "Full path to the note (relative to the vault root) that needs to be read, such as 'Projects/plan.md'."
+      "Full path to the note file (relative to the vault root) that needs to be read, such as 'Projects/plan.md' or 'Maps/architecture.canvas'."
     ),
   chunkIndex: z
     .preprocess((value) => {
@@ -383,7 +485,7 @@ const readNoteSchema = z.object({
 const readNoteTool = createLangChainTool({
   name: "readNote",
   description:
-    "Read a single note in search v3 sized chunks. Use only when you already know the exact note path and need its contents.",
+    "Read a single vault note file (for example .md, .canvas, or .base) in search v3 sized chunks. Use only when you already know the exact note path and need its contents.",
   schema: readNoteSchema,
   func: async ({ notePath, chunkIndex = 0 }) => {
     const sanitizedPath = notePath.trim();
@@ -424,8 +526,9 @@ const readNoteTool = createLangChainTool({
 
     const file = resolution.file;
     const canonicalPath = file.path;
-    const text = await readNoteText(file);
-    const chunks = chunkContentByLines(file, text);
+    const rawText = await readNoteText(file);
+    const { normalizedContent, canvasSummary } = prepareNoteContentForRead(file, rawText);
+    const chunks = chunkContentByLines(file, normalizedContent);
     const totalChunks = chunks.length;
 
     if (totalChunks === 0) {
@@ -454,6 +557,7 @@ const readNoteTool = createLangChainTool({
     return {
       notePath: canonicalPath,
       noteTitle: file.basename,
+      fileType: file.extension,
       heading: chunk.heading,
       chunkId: chunk.id,
       chunkIndex: chunk.chunkIndex,
@@ -462,6 +566,7 @@ const readNoteTool = createLangChainTool({
       nextChunkIndex: hasMore ? chunk.chunkIndex + 1 : null,
       content: chunk.content,
       mtime: file.stat.mtime,
+      canvasSummary,
       linkedNotes: linkedNotes.length > 0 ? linkedNotes : undefined,
     };
   },

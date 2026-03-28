@@ -251,28 +251,16 @@ export function ChatControls({
             >
               vault QA (free)
             </DropdownMenuItem>
-            {isPlusUser ? (
-              <DropdownMenuItem
-                onSelect={() => {
-                  handleModeChange(ChainType.COPILOT_PLUS_CHAIN);
-                }}
-              >
-                <div className="tw-flex tw-items-center tw-gap-1">
-                  <Sparkles className="tw-size-4" />
-                  copilot plus
-                </div>
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem
-                onSelect={() => {
-                  navigateToPlusPage(PLUS_UTM_MEDIUMS.CHAT_MODE_SELECT);
-                  onCloseProject?.();
-                }}
-              >
+            <DropdownMenuItem
+              onSelect={() => {
+                handleModeChange(ChainType.COPILOT_PLUS_CHAIN);
+              }}
+            >
+              <div className="tw-flex tw-items-center tw-gap-1">
+                <Sparkles className="tw-size-4" />
                 copilot plus
-                <SquareArrowOutUpRight className="tw-size-3" />
-              </DropdownMenuItem>
-            )}
+              </div>
+            </DropdownMenuItem>
 
             {isPlusUser ? (
               <DropdownMenuItem
@@ -291,7 +279,7 @@ export function ChatControls({
                   onCloseProject?.();
                 }}
               >
-                copilot plus
+                projects (alpha)
                 <SquareArrowOutUpRight className="tw-size-3" />
               </DropdownMenuItem>
             )}

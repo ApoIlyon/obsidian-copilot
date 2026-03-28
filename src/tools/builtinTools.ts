@@ -168,7 +168,7 @@ Example: "what time is 6pm PT in Tokyo" (PT is UTC-8 or UTC-7, Tokyo is UTC+9) â
 - If the user asks about a note title that is already mentioned in the current or previous turns of the conversation, or linked in <active_note> or <note_context> blocks, call readNote directlyâ€”do not use localSearch to look it up. Even if the note title mention is partial but similar to what you have seen in the context, try to infer the correct note path from context. Skip the tool when a note is irrelevant to the user query.
 - If the user asks about notes linked from that note, read the original note first, then follow the "linkedNotes" paths returned in the tool result to inspect those linked notes.
 - Always start with chunk 0 (omit chunkIndex or set it to 0). Only request the next chunk if the previous chunk did not answer the question.
-- Pass vault-relative paths without a leading slash. If a call fails, adjust the path (for example, add ".md" or use an alternative candidate) and retry only if necessary.
+- Pass vault-relative paths without a leading slash. If a call fails, adjust the path (for example, add ".md"/".canvas" or use an alternative candidate) and retry only if necessary.
 - Every tool result may include a "linkedNotes" array. If the user needs information from those linked notes, call readNote again with one of the provided candidate paths, starting again at chunk 0. Do not expand links you don't need.
 - Stop calling readNote as soon as you have the required information.
 - Always call getFileTree to get the exact note path if it is not provided in the context before calling readNote.

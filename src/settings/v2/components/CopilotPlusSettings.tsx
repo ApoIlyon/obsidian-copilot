@@ -96,7 +96,7 @@ export const CopilotPlusSettings: React.FC = () => {
       <section className="tw-flex tw-flex-col tw-gap-4">
         <div className="tw-flex tw-items-center tw-py-4">
           <Badge variant="secondary" className="tw-text-accent">
-            Plus Required
+            Advanced Mode
           </Badge>
         </div>
         <div className="tw-flex tw-flex-col tw-gap-4">
@@ -105,7 +105,7 @@ export const CopilotPlusSettings: React.FC = () => {
           <SettingItem
             type="switch"
             title="Enable Autonomous Agent"
-            description="Enable autonomous agent mode in Plus chat. The AI will reason step-by-step and decide which tools to use automatically, improving response quality for complex queries."
+            description="Enable autonomous agent mode in Copilot chat. The AI will reason step-by-step and decide which tools to use automatically, improving response quality for complex queries."
             checked={settings.enableAutonomousAgent}
             onCheckedChange={(checked) => {
               updateSetting("enableAutonomousAgent", checked);

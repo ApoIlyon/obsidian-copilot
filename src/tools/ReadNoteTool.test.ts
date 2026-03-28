@@ -11,12 +11,14 @@ const invokeReadNoteTool = async (tool: StructuredTool, args: any) => {
 class MockTFile {
   path: string;
   basename: string;
+  extension: string;
   stat: { mtime: number };
 
   constructor(path: string) {
     this.path = path;
     const fileName = path.split("/").pop() || path;
     this.basename = fileName.replace(/\.[^/.]+$/, "");
+    this.extension = fileName.includes(".") ? fileName.split(".").pop() || "" : "";
     this.stat = { mtime: Date.now() };
   }
 }
@@ -25,11 +27,16 @@ jest.mock("obsidian", () => ({
   TFile: MockTFile,
 }));
 
+jest.mock("@/logger", () => ({
+  logInfo: jest.fn(),
+  logWarn: jest.fn(),
+}));
+
 describe("readNoteTool", () => {
   let readNoteTool: StructuredTool;
   let originalApp: any;
   let getAbstractFileByPathMock: jest.Mock;
-  let getMarkdownFilesMock: jest.Mock;
+  let getFilesMock: jest.Mock;
   let getFirstLinkpathDestMock: jest.Mock;
 
   beforeEach(async () => {
@@ -37,7 +44,7 @@ describe("readNoteTool", () => {
 
     originalApp = global.app;
     getAbstractFileByPathMock = jest.fn();
-    getMarkdownFilesMock = jest.fn().mockReturnValue([]);
+    getFilesMock = jest.fn().mockReturnValue([]);
     getFirstLinkpathDestMock = jest.fn().mockReturnValue(null);
     mockRead.mockReset();
     mockRead.mockResolvedValue("");
@@ -45,7 +52,7 @@ describe("readNoteTool", () => {
     global.app = {
       vault: {
         getAbstractFileByPath: getAbstractFileByPathMock,
-        getMarkdownFiles: getMarkdownFilesMock,
+        getFiles: getFilesMock,
         read: mockRead,
       },
       metadataCache: {
@@ -125,7 +132,7 @@ describe("readNoteTool", () => {
     const notePath = "[[#Setup]]";
     getAbstractFileByPathMock.mockReturnValue(null);
     getFirstLinkpathDestMock.mockReturnValue(null);
-    getMarkdownFilesMock.mockReturnValue([new MockTFile("Docs/Guide.md")]);
+    getFilesMock.mockReturnValue([new MockTFile("Docs/Guide.md")]);
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath });
 
@@ -141,7 +148,7 @@ describe("readNoteTool", () => {
     const notePath = "[[]]";
     getAbstractFileByPathMock.mockReturnValue(null);
     getFirstLinkpathDestMock.mockReturnValue(null);
-    getMarkdownFilesMock.mockReturnValue([new MockTFile("Docs/Guide.md")]);
+    getFilesMock.mockReturnValue([new MockTFile("Docs/Guide.md")]);
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath });
 
@@ -175,7 +182,7 @@ describe("readNoteTool", () => {
     getFirstLinkpathDestMock.mockImplementation((link: string) =>
       link === "Project Plan" ? candidatePrimary : null
     );
-    getMarkdownFilesMock.mockReturnValue([candidatePrimary, candidateDuplicate, file]);
+    getFilesMock.mockReturnValue([candidatePrimary, candidateDuplicate, file]);
     mockRead.mockResolvedValue("Intro [[Project Plan]] details");
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath });
@@ -202,7 +209,7 @@ describe("readNoteTool", () => {
     getFirstLinkpathDestMock.mockImplementation((link: string) =>
       link === "Docs/Guide" ? guideFile : null
     );
-    getMarkdownFilesMock.mockReturnValue([guideFile, file]);
+    getFilesMock.mockReturnValue([guideFile, file]);
     mockRead.mockResolvedValue("See [[Docs/Guide#Setup|Quick Start]] for steps.");
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath });
@@ -240,6 +247,28 @@ describe("readNoteTool", () => {
     expect(mockRead).toHaveBeenCalledWith(file);
   });
 
+  it("resolves canvas paths without an explicit extension", async () => {
+    const rawPath = "Maps/architecture";
+    const canvasFile = new MockTFile(`${rawPath}.canvas`);
+
+    getAbstractFileByPathMock.mockImplementation((path: string) => {
+      if (path === rawPath) {
+        return null;
+      }
+      if (path === `${rawPath}.canvas`) {
+        return canvasFile;
+      }
+      return null;
+    });
+    mockRead.mockResolvedValue('{"nodes":[],"edges":[]}');
+
+    const result = await invokeReadNoteTool(readNoteTool, { notePath: rawPath });
+
+    expect(result.notePath).toBe(canvasFile.path);
+    expect(result.fileType).toBe("canvas");
+    expect(mockRead).toHaveBeenCalledWith(canvasFile);
+  });
+
   it("resolves wiki-linked notes via metadata without active note context", async () => {
     const requestedPath = "Project Plan";
     const targetFile = new MockTFile("Projects/Project Plan.md");
@@ -266,7 +295,7 @@ describe("readNoteTool", () => {
 
     getAbstractFileByPathMock.mockReturnValue(null);
     getFirstLinkpathDestMock.mockReturnValue(null);
-    getMarkdownFilesMock.mockReturnValue([targetFile]);
+    getFilesMock.mockReturnValue([targetFile]);
     mockRead.mockResolvedValue("Content");
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath: requestedPath });
@@ -282,7 +311,7 @@ describe("readNoteTool", () => {
 
     getAbstractFileByPathMock.mockReturnValue(null);
     getFirstLinkpathDestMock.mockReturnValue(null);
-    getMarkdownFilesMock.mockReturnValue([projectFile, archiveFile]);
+    getFilesMock.mockReturnValue([projectFile, archiveFile]);
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath: requestedPath });
 
@@ -305,12 +334,41 @@ describe("readNoteTool", () => {
 
     getAbstractFileByPathMock.mockReturnValue(null);
     getFirstLinkpathDestMock.mockReturnValue(null);
-    getMarkdownFilesMock.mockReturnValue([targetFile, duplicateFile]);
+    getFilesMock.mockReturnValue([targetFile, duplicateFile]);
     mockRead.mockResolvedValue("Content");
 
     const result = await invokeReadNoteTool(readNoteTool, { notePath: requestedPath });
 
     expect(result.notePath).toBe(targetFile.path);
     expect(mockRead).toHaveBeenCalledWith(targetFile);
+  });
+
+  it("returns canvas structural metadata when reading canvas files", async () => {
+    const notePath = "Maps/flow.canvas";
+    const canvasFile = new MockTFile(notePath);
+    getAbstractFileByPathMock.mockReturnValue(canvasFile);
+    mockRead.mockResolvedValue(
+      JSON.stringify(
+        {
+          nodes: [
+            { id: "n1", type: "text", text: "Start", x: 0, y: 0, width: 240, height: 80 },
+            { id: "n2", type: "text", text: "End", x: 320, y: 0, width: 240, height: 80 },
+          ],
+          edges: [{ id: "e1", fromNode: "n1", toNode: "n2" }],
+        },
+        null,
+        2
+      )
+    );
+
+    const result = await invokeReadNoteTool(readNoteTool, { notePath });
+
+    expect(result.fileType).toBe("canvas");
+    expect(result.canvasSummary).toEqual({
+      nodeCount: 2,
+      edgeCount: 1,
+      invalidEdgeCount: 0,
+      nodeTypeCounts: { text: 2 },
+    });
   });
 });
